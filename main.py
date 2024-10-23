@@ -52,6 +52,7 @@ with tab1:
         if product_data:
             db.add_product(**product_data, user_id=user_id)
             st.success("Product added successfully!")
+            st.rerun()  # This will clear the form
     
     with col2:
         st.info("""
@@ -81,6 +82,7 @@ with tab2:
                 user_id=user_id
             )
             st.success("Product added successfully from receipt!")
+            st.rerun()  # Clear the form after successful receipt submission
 
 with tab3:
     # Summary and calculations
