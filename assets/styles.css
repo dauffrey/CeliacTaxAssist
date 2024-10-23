@@ -1,0 +1,21 @@
+/* Mobile-responsive styles */
+div.stButton > button {
+    width: 100%;
+    border-radius: 5px;
+}
+
+div.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+    .main .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    div[data-testid="stForm"] {
+        padding: 1rem;
+    }
+}
