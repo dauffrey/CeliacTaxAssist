@@ -60,7 +60,7 @@ class DatabaseManager:
         with self.conn.cursor() as cur:
             cur.execute("SELECT id, password_hash FROM users WHERE username = %s", (username,))
             result = cur.fetchone()
-            if result and bcrypt.checkpw(password.encode('utf-8'), result[1]):
+            if result and bcrypt.checkpw(password.encode('utf-8'), bytes(result[1])):
                 return result[0]
             return None
 
