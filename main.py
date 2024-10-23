@@ -8,6 +8,11 @@ from components.receipt_scanner import render_receipt_scanner
 from components.auth import render_auth
 from utils.calculations import calculate_tax_credit
 from utils.pdf_generator import generate_tax_report
+from utils.tax_export import (
+    generate_turbotax_csv,
+    generate_quicken_qif,
+    generate_json_export
+)
 
 # Page configuration
 st.set_page_config(
@@ -90,15 +95,58 @@ with tab3:
         with col3:
             st.metric("Estimated Tax Credit", f"${calculations['estimated_tax_credit']:.2f}")
         
-        # Generate report
-        if st.button("Generate Tax Report"):
+        # Export options
+        st.subheader("Export Options")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            # PDF Report
             pdf_buffer = generate_tax_report(products, calculations)
             st.download_button(
-                label="Download Tax Report",
+                label="Download PDF Report",
                 data=pdf_buffer,
                 file_name="celiac_tax_report.pdf",
                 mime="application/pdf"
             )
+        
+        with col2:
+            # TurboTax CSV
+            csv_data = generate_turbotax_csv(products, calculations)
+            st.download_button(
+                label="Export for TurboTax (CSV)",
+                data=csv_data,
+                file_name="celiac_tax_turbotax.csv",
+                mime="text/csv"
+            )
+        
+        with col3:
+            # Quicken QIF
+            qif_data = generate_quicken_qif(products)
+            st.download_button(
+                label="Export for Quicken (QIF)",
+                data=qif_data,
+                file_name="celiac_tax_quicken.qif",
+                mime="text/plain"
+            )
+        
+        with col4:
+            # JSON Export
+            json_data = generate_json_export(products, calculations)
+            st.download_button(
+                label="Export as JSON",
+                data=json_data,
+                file_name="celiac_tax_data.json",
+                mime="application/json"
+            )
+        
+        # Format compatibility info
+        st.info("""
+        📥 Export Options:
+        - PDF Report: Complete tax report with calculations and summary
+        - TurboTax (CSV): Import directly into TurboTax as medical expenses
+        - Quicken (QIF): Import as categorized transactions in Quicken
+        - JSON: Full data export for custom processing
+        """)
     else:
         st.info("Add some products to see your tax summary!")
 
