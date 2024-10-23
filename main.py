@@ -6,6 +6,7 @@ from components.product_list import render_product_list
 from components.educational_content import render_educational_content
 from components.receipt_scanner import render_receipt_scanner
 from components.auth import render_auth
+from components.price_comparison import render_price_comparison
 from utils.calculations import calculate_tax_credit
 from utils.pdf_generator import generate_tax_report
 from utils.tax_export import (
@@ -40,7 +41,7 @@ st.title("Celiac Tax Calculator")
 st.markdown("Track your gluten-free expenses for tax purposes")
 
 # Tabs for different sections
-tab1, tab2, tab3, tab4 = st.tabs(["Products", "Scan Receipt", "Summary", "Guidelines"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Products", "Price Comparison", "Scan Receipt", "Summary", "Guidelines"])
 
 with tab1:
     # Product management
@@ -52,7 +53,7 @@ with tab1:
         if product_data:
             db.add_product(**product_data, user_id=user_id)
             st.success("Product added successfully!")
-            st.rerun()  # This will clear the form
+            st.rerun()
     
     with col2:
         st.info("""
@@ -65,6 +66,10 @@ with tab1:
     render_product_list(products)
 
 with tab2:
+    # Price comparison database
+    render_price_comparison(db, user_id)
+
+with tab3:
     # Receipt scanner
     st.info("""
     📸 Upload a receipt image to automatically extract prices.
@@ -82,9 +87,9 @@ with tab2:
                 user_id=user_id
             )
             st.success("Product added successfully from receipt!")
-            st.rerun()  # Clear the form after successful receipt submission
+            st.rerun()
 
-with tab3:
+with tab4:
     # Summary and calculations
     if products := db.get_user_products(user_id):
         calculations = calculate_tax_credit(products)
@@ -152,6 +157,6 @@ with tab3:
     else:
         st.info("Add some products to see your tax summary!")
 
-with tab4:
+with tab5:
     # Educational content
     render_educational_content()
