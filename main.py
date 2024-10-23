@@ -4,6 +4,7 @@ from database.db_manager import DatabaseManager
 from components.product_form import render_product_form
 from components.product_list import render_product_list
 from components.educational_content import render_educational_content
+from components.receipt_scanner import render_receipt_scanner
 from utils.calculations import calculate_tax_credit
 from utils.pdf_generator import generate_tax_report
 
@@ -30,7 +31,7 @@ st.title("Celiac Tax Calculator")
 st.markdown("Track your gluten-free expenses for tax purposes")
 
 # Tabs for different sections
-tab1, tab2, tab3 = st.tabs(["Products", "Summary", "Guidelines"])
+tab1, tab2, tab3, tab4 = st.tabs(["Products", "Scan Receipt", "Summary", "Guidelines"])
 
 with tab1:
     # Product management
@@ -54,8 +55,26 @@ with tab1:
     render_product_list(products)
 
 with tab2:
+    # Receipt scanner
+    st.info("""
+    📸 Upload a receipt image to automatically extract prices.
+    Make sure the receipt shows both gluten-free and regular product prices.
+    """)
+    
+    price_data = render_receipt_scanner()
+    if price_data:
+        product_name = st.text_input("Product Name")
+        if product_name and st.button("Add Product"):
+            db.add_product(
+                product_name=product_name,
+                gf_price=price_data["gf_price"],
+                regular_price=price_data["regular_price"]
+            )
+            st.success("Product added successfully from receipt!")
+
+with tab3:
     # Summary and calculations
-    if products:
+    if products := db.get_all_products():
         calculations = calculate_tax_credit(products)
         
         col1, col2, col3 = st.columns(3)
@@ -78,6 +97,6 @@ with tab2:
     else:
         st.info("Add some products to see your tax summary!")
 
-with tab3:
+with tab4:
     # Educational content
     render_educational_content()
