@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "bcrypt>=4.2.0",
     "pillow>=10.4.0",
     "psycopg2-binary>=2.9.10",
     "pytesseract>=0.3.13",
     "reportlab>=4.2.5",
+    "streamlit-authenticator>=0.4.1",
     "streamlit>=1.39.0",
 ]

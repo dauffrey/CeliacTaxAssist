@@ -5,6 +5,7 @@ from components.product_form import render_product_form
 from components.product_list import render_product_list
 from components.educational_content import render_educational_content
 from components.receipt_scanner import render_receipt_scanner
+from components.auth import render_auth
 from utils.calculations import calculate_tax_credit
 from utils.pdf_generator import generate_tax_report
 
@@ -26,6 +27,9 @@ def get_database():
 
 db = get_database()
 
+# Authentication
+user_id = render_auth(db)
+
 # Main app layout
 st.title("Celiac Tax Calculator")
 st.markdown("Track your gluten-free expenses for tax purposes")
@@ -41,7 +45,7 @@ with tab1:
         # Product form
         product_data = render_product_form()
         if product_data:
-            db.add_product(**product_data)
+            db.add_product(**product_data, user_id=user_id)
             st.success("Product added successfully!")
     
     with col2:
@@ -51,7 +55,7 @@ with tab1:
         """)
     
     # Product list
-    products = db.get_all_products()
+    products = db.get_user_products(user_id)
     render_product_list(products)
 
 with tab2:
@@ -68,13 +72,14 @@ with tab2:
             db.add_product(
                 product_name=product_name,
                 gf_price=price_data["gf_price"],
-                regular_price=price_data["regular_price"]
+                regular_price=price_data["regular_price"],
+                user_id=user_id
             )
             st.success("Product added successfully from receipt!")
 
 with tab3:
     # Summary and calculations
-    if products := db.get_all_products():
+    if products := db.get_user_products(user_id):
         calculations = calculate_tax_credit(products)
         
         col1, col2, col3 = st.columns(3)
