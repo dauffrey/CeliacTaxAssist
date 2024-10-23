@@ -12,9 +12,12 @@ def calculate_tax_credit(products):
     # This is a simplified calculation
     tax_credit_rate = 0.15  # Federal tax credit rate
     
+    # Convert Decimal to float before multiplication
+    total_difference_float = float(total_difference)
+    
     return {
         'total_difference': total_difference,
-        'estimated_tax_credit': total_difference * tax_credit_rate,
+        'estimated_tax_credit': total_difference_float * tax_credit_rate,
         'product_count': len(df),
-        'average_difference': df['difference'].mean() if not df.empty else 0
+        'average_difference': float(df['difference'].mean() if not df.empty else 0)
     }
