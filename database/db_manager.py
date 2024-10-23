@@ -10,6 +10,10 @@ class DatabaseManager:
     def __init__(self):
         self.max_retries = 3
         self.retry_delay = 1  # seconds
+        self._create_connection_pool()
+
+    def _create_connection_pool(self):
+        """Create a new connection pool"""
         self.pool = psycopg2.pool.SimpleConnectionPool(
             minconn=1,
             maxconn=10,
@@ -19,39 +23,45 @@ class DatabaseManager:
             password=os.environ['PGPASSWORD'],
             port=os.environ['PGPORT']
         )
-        self._create_tables()
 
-    @contextmanager
-    def get_connection(self):
-        """Get a database connection from the pool with retry logic"""
+    def _get_db_connection(self):
+        """Get a database connection with retry logic"""
         retries = 0
         while retries < self.max_retries:
             try:
-                conn = self.pool.getconn()
-                if conn.closed:
-                    self.pool.putconn(conn)
-                    raise psycopg2.OperationalError("Connection is closed")
-                yield conn
-                self.pool.putconn(conn)
-                break
-            except psycopg2.OperationalError:
+                return self.pool.getconn()
+            except psycopg2.OperationalError as e:
                 retries += 1
                 if retries == self.max_retries:
                     raise
                 time.sleep(self.retry_delay)
-                # Recreate pool if needed
                 try:
-                    self.pool = psycopg2.pool.SimpleConnectionPool(
-                        minconn=1,
-                        maxconn=10,
-                        host=os.environ['PGHOST'],
-                        database=os.environ['PGDATABASE'],
-                        user=os.environ['PGUSER'],
-                        password=os.environ['PGPASSWORD'],
-                        port=os.environ['PGPORT']
-                    )
+                    self._create_connection_pool()
                 except:
                     continue
+
+    @contextmanager
+    def get_connection(self):
+        """Get a database connection from the pool with proper cleanup"""
+        conn = None
+        try:
+            conn = self._get_db_connection()
+            if conn.closed:
+                self.pool.putconn(conn)
+                raise psycopg2.OperationalError("Connection is closed")
+            yield conn
+        except psycopg2.OperationalError:
+            if conn:
+                conn.close()
+                self.pool.putconn(conn)
+            raise
+        except:
+            if conn:
+                conn.close()
+                self.pool.putconn(conn)
+            raise
+        else:
+            self.pool.putconn(conn)
 
     def _create_tables(self):
         with self.get_connection() as conn:
@@ -67,17 +77,17 @@ class DatabaseManager:
                     )
                 """)
                 
-                # Update products table to include user_id
+                # Create products table if it doesn't exist
                 cur.execute("""
-                    DO $$
-                    BEGIN
-                        BEGIN
-                            ALTER TABLE products ADD COLUMN user_id INTEGER REFERENCES users(id);
-                        EXCEPTION
-                            WHEN duplicate_column THEN
-                                NULL;
-                        END;
-                    END $$;
+                    CREATE TABLE IF NOT EXISTS products (
+                        id SERIAL PRIMARY KEY,
+                        product_name VARCHAR(255) NOT NULL,
+                        gf_price DECIMAL(10,2) NOT NULL,
+                        regular_price DECIMAL(10,2) NOT NULL,
+                        difference DECIMAL(10,2) NOT NULL,
+                        user_id INTEGER REFERENCES users(id),
+                        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
                 """)
                 conn.commit()
 
