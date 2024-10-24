@@ -1,14 +1,113 @@
-/* Mobile-responsive styles */
+/* iOS-like Design System */
+:root {
+    --ios-primary: #007AFF;
+    --ios-secondary: #5856D6;
+    --ios-success: #34C759;
+    --ios-warning: #FF9500;
+    --ios-error: #FF3B30;
+    --ios-background: #F2F2F7;
+    --ios-card: #FFFFFF;
+    --ios-text: #000000;
+    --ios-text-secondary: #8E8E93;
+}
+
+/* Global Styles */
+.stApp {
+    background-color: var(--ios-background);
+}
+
+/* Typography */
+h1, h2, h3, .st-emotion-cache-1, .st-emotion-cache-2 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+    letter-spacing: -0.5px;
+}
+
+/* iOS-style Cards */
+div[data-testid="stForm"] {
+    background: var(--ios-card);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    margin: 10px 0;
+}
+
+/* iOS-style Buttons */
 div.stButton > button {
+    background: var(--ios-primary);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 20px;
+    font-weight: 600;
+    transition: all 0.2s ease;
     width: 100%;
-    border-radius: 5px;
+    height: 40px;
+    font-size: 16px;
 }
 
-div.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
+div.stButton > button:hover {
+    background: rgba(0,122,255,0.9);
+    transform: translateY(-1px);
 }
 
+/* iOS-style Metrics */
+div[data-testid="metric-container"] {
+    background: var(--ios-card);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+div[data-testid="metric-container"] label {
+    font-weight: 600;
+    color: var(--ios-text-secondary);
+}
+
+/* iOS-style Tabs */
+div[data-testid="stTabs"] {
+    background: var(--ios-card);
+    border-radius: 16px;
+    padding: 8px;
+    margin-bottom: 20px;
+}
+
+div[data-testid="stTabs"] button[role="tab"] {
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    background: var(--ios-primary);
+    color: white;
+}
+
+/* iOS-style Inputs */
+div[data-testid="stTextInput"] input, 
+div[data-testid="stNumberInput"] input, 
+div[data-testid="stDateInput"] input {
+    border-radius: 10px;
+    border: 1px solid #E5E5EA;
+    padding: 12px;
+    font-size: 16px;
+}
+
+/* iOS-style Tables */
+div[data-testid="stDataFrame"] {
+    background: var(--ios-card);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+/* iOS-style Info Boxes */
+div[data-testid="stAlert"] {
+    border-radius: 16px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+/* Mobile Responsiveness */
 @media (max-width: 768px) {
     .main .block-container {
         padding-left: 1rem;
@@ -16,6 +115,35 @@ div.block-container {
     }
     
     div[data-testid="stForm"] {
-        padding: 1rem;
+        padding: 16px;
+    }
+    
+    div[data-testid="stTabs"] {
+        padding: 4px;
+    }
+    
+    div[data-testid="metric-container"] {
+        margin: 8px 0;
+    }
+}
+
+/* Dynamic Island-inspired Notifications */
+div[data-testid="stAlert"] {
+    animation: slideDown 0.3s ease-out;
+    border-radius: 20px;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(10px);
+    color: white;
+    margin: 8px 0;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
     }
 }

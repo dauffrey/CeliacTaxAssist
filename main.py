@@ -15,11 +15,12 @@ from utils.tax_export import (
     generate_json_export
 )
 
-# Page configuration
+# Page configuration with iOS-like styling
 st.set_page_config(
     page_title="Celiac Tax Calculator",
     page_icon="🌾",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 # Load custom CSS
@@ -36,12 +37,24 @@ db = get_database()
 # Authentication
 user_id = render_auth(db)
 
-# Main app layout
-st.title("Celiac Tax Calculator")
-st.markdown("Track your gluten-free expenses for tax purposes")
+# Main app layout with iOS-style header
+st.markdown("""
+    <div style='text-align: center; padding: 20px 0;'>
+        <h1 style='font-size: 2.5rem; font-weight: 700; margin-bottom: 0;'>Celiac Tax Calculator</h1>
+        <p style='color: #8E8E93; font-size: 1.1rem; margin-top: 5px;'>Track your gluten-free expenses for tax purposes</p>
+    </div>
+""", unsafe_allow_html=True)
 
-# Tabs for different sections
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Products", "Price Comparison", "Scan Receipt", "Summary", "Guidelines"])
+# Tabs with iOS-style icons
+tabs = {
+    "Products": "📱",
+    "Price Comparison": "💰",
+    "Scan Receipt": "📸",
+    "Summary": "📊",
+    "Guidelines": "📖"
+}
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([f"{icon} {name}" for name, icon in tabs.items()])
 
 with tab1:
     # Product management
@@ -52,7 +65,7 @@ with tab1:
         product_data = render_product_form()
         if product_data:
             db.add_product(**product_data, user_id=user_id)
-            st.success("Product added successfully!")
+            st.success("✅ Product added successfully!")
             st.rerun()
     
     with col2:
@@ -70,11 +83,15 @@ with tab2:
     render_price_comparison(db, user_id)
 
 with tab3:
-    # Receipt scanner
-    st.info("""
-    📸 Upload a receipt image to automatically extract prices.
-    Make sure the receipt shows both gluten-free and regular product prices.
-    """)
+    # Receipt scanner with iOS-style camera UI
+    st.markdown("""
+        <div style='background: var(--ios-card); padding: 20px; border-radius: 16px; text-align: center;'>
+            <span style='font-size: 2rem;'>📸</span>
+            <p style='margin: 10px 0; color: var(--ios-text-secondary);'>
+                Upload a receipt image to automatically extract prices
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
     
     price_data = render_receipt_scanner()
     if price_data:
@@ -86,77 +103,79 @@ with tab3:
                 regular_price=price_data["regular_price"],
                 user_id=user_id
             )
-            st.success("Product added successfully from receipt!")
+            st.success("✅ Product added successfully from receipt!")
             st.rerun()
 
 with tab4:
-    # Summary and calculations
+    # Summary and calculations with iOS-style metrics
     if products := db.get_user_products(user_id):
         calculations = calculate_tax_credit(products)
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Extra Cost", f"${calculations['total_difference']:.2f}")
+            st.metric("💰 Total Extra Cost", f"${calculations['total_difference']:.2f}")
         with col2:
-            st.metric("Products Tracked", calculations['product_count'])
+            st.metric("📊 Products Tracked", calculations['product_count'])
         with col3:
-            st.metric("Estimated Tax Credit", f"${calculations['estimated_tax_credit']:.2f}")
+            st.metric("💸 Estimated Tax Credit", f"${calculations['estimated_tax_credit']:.2f}")
         
-        # Export options
+        # Export options with iOS-style buttons
         st.subheader("Export Options")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # PDF Report
             pdf_buffer = generate_tax_report(products, calculations)
             st.download_button(
-                label="Download PDF Report",
+                label="📑 PDF Report",
                 data=pdf_buffer,
                 file_name="celiac_tax_report.pdf",
                 mime="application/pdf"
             )
         
         with col2:
-            # TurboTax CSV
             csv_data = generate_turbotax_csv(products, calculations)
             st.download_button(
-                label="Export for TurboTax (CSV)",
+                label="📊 TurboTax CSV",
                 data=csv_data,
                 file_name="celiac_tax_turbotax.csv",
                 mime="text/csv"
             )
         
         with col3:
-            # Quicken QIF
             qif_data = generate_quicken_qif(products)
             st.download_button(
-                label="Export for Quicken (QIF)",
+                label="💳 Quicken QIF",
                 data=qif_data,
                 file_name="celiac_tax_quicken.qif",
                 mime="text/plain"
             )
         
         with col4:
-            # JSON Export
             json_data = generate_json_export(products, calculations)
             st.download_button(
-                label="Export as JSON",
+                label="🔄 JSON Export",
                 data=json_data,
                 file_name="celiac_tax_data.json",
                 mime="application/json"
             )
         
-        # Format compatibility info
         st.info("""
-        📥 Export Options:
-        - PDF Report: Complete tax report with calculations and summary
-        - TurboTax (CSV): Import directly into TurboTax as medical expenses
-        - Quicken (QIF): Import as categorized transactions in Quicken
-        - JSON: Full data export for custom processing
+        📱 Export Options:
+        • PDF Report: Complete tax report with calculations and summary
+        • TurboTax (CSV): Import directly into TurboTax as medical expenses
+        • Quicken (QIF): Import as categorized transactions in Quicken
+        • JSON: Full data export for custom processing
         """)
     else:
-        st.info("Add some products to see your tax summary!")
+        st.info("📱 Add some products to see your tax summary!")
 
 with tab5:
-    # Educational content
+    # Educational content with iOS-style formatting
     render_educational_content()
+
+# Add iOS-style footer
+st.markdown("""
+    <div style='text-align: center; padding: 20px 0; color: var(--ios-text-secondary); font-size: 0.9rem;'>
+        Made with ❤️ for the Celiac community
+    </div>
+""", unsafe_allow_html=True)
