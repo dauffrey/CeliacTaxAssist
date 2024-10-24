@@ -7,6 +7,7 @@ from components.educational_content import render_educational_content
 from components.receipt_scanner import render_receipt_scanner
 from components.auth import render_auth
 from components.price_comparison import render_price_comparison
+from components.chat_assistant import render_chat_assistant
 from utils.calculations import calculate_tax_credit
 from utils.pdf_generator import generate_tax_report
 from utils.tax_export import (
@@ -51,10 +52,11 @@ tabs = {
     "Price Comparison": "💰",
     "Scan Receipt": "📸",
     "Summary": "📊",
-    "Guidelines": "📖"
+    "Guidelines": "📖",
+    "Chat Assistant": "🤖"
 }
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([f"{icon} {name}" for name, icon in tabs.items()])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([f"{icon} {name}" for name, icon in tabs.items()])
 
 with tab1:
     # Product management
@@ -188,6 +190,10 @@ with tab4:
 with tab5:
     # Educational content with iOS-style formatting
     render_educational_content()
+
+with tab6:
+    # Chat Assistant with iOS-style interface
+    render_chat_assistant()
 
 # Add iOS-style footer
 st.markdown("""
