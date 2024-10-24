@@ -69,10 +69,16 @@ with tab1:
             st.rerun()
     
     with col2:
-        st.info("""
-        📝 Add your gluten-free products and their regular counterparts to track the price difference.
-        Keep your receipts for tax purposes!
-        """)
+        st.markdown("""
+        <div style='background: var(--ios-info-background); color: var(--ios-info-text); padding: 16px; border-radius: 16px;'>
+            <p style='margin: 0;'>
+                <strong>📝 Quick Guide</strong><br>
+                • Add your gluten-free products<br>
+                • Enter regular counterpart prices<br>
+                • Keep receipts for tax purposes
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Product list
     products = db.get_user_products(user_id)
@@ -159,15 +165,25 @@ with tab4:
                 mime="application/json"
             )
         
-        st.info("""
-        📱 Export Options:
-        • PDF Report: Complete tax report with calculations and summary
-        • TurboTax (CSV): Import directly into TurboTax as medical expenses
-        • Quicken (QIF): Import as categorized transactions in Quicken
-        • JSON: Full data export for custom processing
-        """)
+        st.markdown("""
+        <div style='background: var(--ios-info-background); color: var(--ios-info-text); padding: 16px; border-radius: 16px;'>
+            <p style='margin: 0;'>
+                <strong>📱 Export Options</strong><br>
+                • PDF Report: Complete tax report with calculations and summary<br>
+                • TurboTax (CSV): Import directly into TurboTax as medical expenses<br>
+                • Quicken (QIF): Import as categorized transactions in Quicken<br>
+                • JSON: Full data export for custom processing
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.info("📱 Add some products to see your tax summary!")
+        st.markdown("""
+        <div style='background: var(--ios-info-background); color: var(--ios-info-text); padding: 16px; border-radius: 16px;'>
+            <p style='margin: 0; text-align: center;'>
+                📱 Add some products to see your tax summary!
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
 with tab5:
     # Educational content with iOS-style formatting
