@@ -102,17 +102,16 @@ with tab3:
     """, unsafe_allow_html=True)
     
     price_data = render_receipt_scanner()
-    if price_data:
-        product_name = st.text_input("Product Name")
-        if product_name and st.button("Add Product"):
+    if price_data and price_data.get("items"):
+        for item in price_data["items"]:
             db.add_product(
-                product_name=product_name,
-                gf_price=price_data["gf_price"],
-                regular_price=price_data["regular_price"],
+                product_name=item["product_name"],
+                gf_price=item["gf_price"],
+                regular_price=item["regular_price"],
                 user_id=user_id
             )
-            st.success("✅ Product added successfully from receipt!")
-            st.rerun()
+        st.success(f"✅ {len(price_data['items'])} products added successfully from receipt!")
+        st.rerun()
 
 with tab4:
     # Summary and calculations with iOS-style metrics

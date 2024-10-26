@@ -11,8 +11,37 @@ from decimal import Decimal
 class ItemPrice:
     item_name: str
     original_price: float
+    description: Optional[str] = None
     discount: Optional[float] = None
     final_price: Optional[float] = None
+    gf_confidence: Optional[float] = None
+
+def is_gluten_free(text: str) -> float:
+    """
+    Check if an item description indicates it's gluten-free
+    Returns a confidence score between 0 and 1
+    """
+    text = text.lower()
+    
+    # Direct indicators (highest confidence)
+    direct_indicators = ['gluten free', 'gluten-free', ' gf ', 'gf:', '(gf)']
+    for indicator in direct_indicators:
+        if indicator in text:
+            return 1.0
+            
+    # Partial indicators (medium confidence)
+    partial_indicators = ['gf', 'g/f', 'g-f', 'gluten']
+    for indicator in partial_indicators:
+        if indicator in text:
+            return 0.8
+            
+    # Common GF product keywords (lower confidence)
+    gf_keywords = ['rice', 'quinoa', 'corn', 'buckwheat', 'sorghum', 'millet']
+    for keyword in gf_keywords:
+        if keyword in text:
+            return 0.4
+            
+    return 0.0
 
 def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
     """
@@ -60,44 +89,59 @@ def preprocess_image(image: Image.Image) -> Image.Image:
 
 def get_items_with_prices(text: str) -> List[ItemPrice]:
     """
-    Extract items with their prices, including discounts
+    Extract items with their prices and descriptions
     Returns a list of ItemPrice objects
     """
     items = []
     
-    # Pattern to match item with price and optional discount
-    # Format examples:
-    # "Item Name: $XX.XX"
-    # "Item Name: $XX.XX (with XX% discount: -$X.XX)"
-    item_pattern = r'([^:\n]+):\s*\$(\d+[.,]\d{2})(?:\s*\(with\s+(\d+)%\s+discount:\s*-\$(\d+[.,]\d{2})\))?'
+    # Split text into lines for better processing
+    lines = text.split('\n')
+    current_item = None
     
-    matches = re.finditer(item_pattern, text)
-    
-    for match in matches:
-        item_name = match.group(1).strip()
-        original_price = float(match.group(2).replace(',', '.'))
-        
-        # Check if there's a discount
-        if match.group(3) and match.group(4):
-            discount = float(match.group(4).replace(',', '.'))
-            final_price = original_price - discount
-        else:
-            discount = None
-            final_price = original_price
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
             
-        items.append(ItemPrice(
-            item_name=item_name,
-            original_price=original_price,
-            discount=discount,
-            final_price=final_price
-        ))
+        # Pattern to match prices with optional descriptions
+        price_match = re.search(r'\$\s*(\d+[.,]\d{2})', line)
+        
+        if price_match:
+            price = float(price_match.group(1).replace(',', '.'))
+            # Extract item name and description
+            description = line[:price_match.start()].strip()
+            if not description and current_item:
+                description = current_item
+            
+            if description:
+                # Check if it might be gluten-free
+                gf_confidence = is_gluten_free(description)
+                
+                # Look for discount
+                discount_match = re.search(r'-\$\s*(\d+[.,]\d{2})', line)
+                discount = float(discount_match.group(1).replace(',', '.')) if discount_match else None
+                
+                final_price = price - discount if discount else price
+                
+                items.append(ItemPrice(
+                    item_name=description.split(':')[0].strip(),
+                    original_price=price,
+                    description=description,
+                    discount=discount,
+                    final_price=final_price,
+                    gf_confidence=gf_confidence
+                ))
+                current_item = None
+        else:
+            # This might be an item description without a price
+            current_item = line
     
     return items
 
-def extract_prices_from_image(image_bytes: bytes) -> Optional[List[float]]:
+def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
     """
-    Extract prices from receipt image using OCR with improved handling
-    Returns a list of detected prices or None if processing fails
+    Extract items and prices from receipt image using OCR
+    Returns a list of ItemPrice objects or None if processing fails
     """
     try:
         # Validate image
@@ -119,26 +163,9 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[float]]:
         items = get_items_with_prices(text)
         
         if not items:
-            # Fallback to simple price detection if no structured items found
-            price_pattern = r'\$\s*\d+[.,]\d{2}'
-            prices = re.findall(price_pattern, text)
-            
-            if not prices:
-                # Try alternative pattern without $ symbol
-                alt_pattern = r'\b\d+[.,]\d{2}\b'
-                prices = re.findall(alt_pattern, text)
-            
-            # Clean and convert prices to float
-            cleaned_prices = []
-            for price in prices:
-                clean_price = float(price.replace('$', '').replace(' ', '').replace(',', '.'))
-                if clean_price > 0:  # Only include positive prices
-                    cleaned_prices.append(clean_price)
-            
-            return cleaned_prices if cleaned_prices else None
+            return None
         
-        # Return final prices from structured items
-        return [item.final_price for item in items if item.final_price > 0]
+        return items
         
     except Exception as e:
         raise Exception(f"Error processing receipt: {str(e)}")
@@ -146,7 +173,6 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[float]]:
 def get_highest_prices(prices: Optional[List[float]], num_prices: int = 2) -> Tuple[Optional[float], Optional[float]]:
     """
     Get the highest prices from the list
-    Usually the higher price would be GF and lower would be regular
     """
     if not prices or len(prices) < num_prices:
         return None, None

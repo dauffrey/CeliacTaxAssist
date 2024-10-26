@@ -1,7 +1,49 @@
 import streamlit as st
-from utils.ocr_processor import extract_prices_from_image, get_highest_prices
+from utils.ocr_processor import extract_prices_from_image, ItemPrice
 from PIL import Image
 import io
+from typing import List, Dict
+
+def render_detected_items(items: List[ItemPrice]) -> Dict[str, Dict]:
+    """
+    Render detected items with checkboxes and return selected items
+    """
+    st.markdown("### Detected Items")
+    
+    selected_items = {}
+    for idx, item in enumerate(items):
+        with st.expander(f"{item.item_name} - ${item.final_price:.2f}", expanded=True):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                if item.description:
+                    st.text(f"Description: {item.description}")
+                if item.discount:
+                    st.text(f"Original: ${item.original_price:.2f}")
+                    st.text(f"Discount: -${item.discount:.2f}")
+                
+                # Show GF confidence if any
+                if item.gf_confidence and item.gf_confidence > 0:
+                    confidence_color = (
+                        "🟢" if item.gf_confidence > 0.8 else
+                        "🟡" if item.gf_confidence > 0.4 else
+                        "🟠"
+                    )
+                    st.text(f"GF Confidence: {confidence_color} {item.gf_confidence*100:.0f}%")
+            
+            with col2:
+                is_gf = st.checkbox("Gluten-Free", key=f"gf_{idx}")
+                is_regular = st.checkbox("Regular", key=f"reg_{idx}")
+                
+                if is_gf or is_regular:
+                    selected_items[item.item_name] = {
+                        "name": item.item_name,
+                        "price": item.final_price,
+                        "is_gf": is_gf,
+                        "is_regular": is_regular
+                    }
+    
+    return selected_items
 
 def render_receipt_scanner():
     st.subheader("Scan Receipt")
@@ -45,44 +87,53 @@ def render_receipt_scanner():
             st.image(image, caption='Uploaded Receipt', use_column_width=False, width=display_size[0])
             
             with st.spinner("Processing receipt..."):
-                # Process the image
                 try:
-                    prices = extract_prices_from_image(image_bytes)
+                    # Process the image
+                    detected_items = extract_prices_from_image(image_bytes)
                     
-                    if not prices:
-                        st.warning("🔍 No prices detected in the receipt. Please ensure:")
+                    if not detected_items:
+                        st.warning("🔍 No items or prices detected in the receipt. Please ensure:")
                         st.markdown("""
                             - The receipt image is clear and well-lit
-                            - Prices are clearly visible
-                            - Prices are in standard format (e.g., $XX.XX)
+                            - Text and prices are clearly visible
+                            - Items and prices are in standard format
                         """)
                         return None
                     
-                    gf_price, regular_price = get_highest_prices(prices)
+                    # Display detected items and get user selection
+                    selected_items = render_detected_items(detected_items)
                     
-                    if gf_price is None or regular_price is None:
-                        st.warning("⚠️ Could not identify both gluten-free and regular prices. Please ensure both prices are visible in the receipt.")
-                        return None
-                    
-                    # Display detected prices in a more appealing way
-                    st.success("✅ Prices detected successfully!")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Detected GF Price", f"${gf_price:.2f}")
-                    with col2:
-                        st.metric("Detected Regular Price", f"${regular_price:.2f}")
-                    
-                    # Show price difference
-                    price_difference = gf_price - regular_price
-                    st.metric("Price Difference", f"${price_difference:.2f}")
-                    
-                    # Allow user to confirm and use these prices
-                    if st.button("✅ Use these prices", type="primary"):
-                        return {
-                            "gf_price": gf_price,
-                            "regular_price": regular_price
-                        }
+                    if selected_items:
+                        # Find GF and regular pairs
+                        gf_items = {name: item for name, item in selected_items.items() if item["is_gf"]}
+                        regular_items = {name: item for name, item in selected_items.items() if item["is_regular"]}
+                        
+                        if gf_items and regular_items:
+                            st.success("✅ Items selected successfully!")
+                            
+                            # Display comparison summary
+                            st.markdown("### Price Comparison Summary")
+                            for gf_name, gf_item in gf_items.items():
+                                st.markdown(f"""
+                                    **{gf_name}**
+                                    - GF Price: ${gf_item['price']:.2f}
+                                    - Regular Price: ${next(iter(regular_items.values()))['price']:.2f}
+                                    - Difference: ${gf_item['price'] - next(iter(regular_items.values()))['price']:.2f}
+                                """)
+                            
+                            if st.button("✅ Add Selected Items", type="primary"):
+                                return {
+                                    "items": [
+                                        {
+                                            "product_name": gf_name,
+                                            "gf_price": gf_item["price"],
+                                            "regular_price": next(iter(regular_items.values()))["price"]
+                                        }
+                                        for gf_name, gf_item in gf_items.items()
+                                    ]
+                                }
+                        else:
+                            st.info("Please mark at least one gluten-free and one regular item for comparison.")
                     
                 except Exception as e:
                     st.error(f"❌ Error processing receipt: {str(e)}")
