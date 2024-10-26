@@ -6,6 +6,11 @@ import bcrypt
 import time
 from contextlib import contextmanager
 from datetime import datetime
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self):
@@ -15,57 +20,102 @@ class DatabaseManager:
         self._create_tables()
 
     def _create_connection_pool(self):
-        """Create a new connection pool"""
-        self.pool = psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            host=os.environ['PGHOST'],
-            database=os.environ['PGDATABASE'],
-            user=os.environ['PGUSER'],
-            password=os.environ['PGPASSWORD'],
-            port=os.environ['PGPORT']
-        )
+        """Create a new connection pool with SSL and connection parameters"""
+        conn_params = {
+            'host': os.environ['PGHOST'],
+            'database': os.environ['PGDATABASE'],
+            'user': os.environ['PGUSER'],
+            'password': os.environ['PGPASSWORD'],
+            'port': os.environ['PGPORT'],
+            'sslmode': 'require',
+            'connect_timeout': 3,
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 5
+        }
+        
+        retry_count = 0
+        while retry_count < self.max_retries:
+            try:
+                self.pool = psycopg2.pool.SimpleConnectionPool(
+                    minconn=1,
+                    maxconn=10,
+                    **conn_params
+                )
+                logger.info("Successfully created database connection pool")
+                return
+            except psycopg2.OperationalError as e:
+                retry_count += 1
+                if retry_count == self.max_retries:
+                    logger.error(f"Failed to create connection pool after {self.max_retries} attempts: {str(e)}")
+                    raise
+                logger.warning(f"Connection attempt {retry_count} failed, retrying in {self.retry_delay} seconds")
+                time.sleep(self.retry_delay)
 
     def _get_db_connection(self):
-        """Get a database connection with retry logic"""
+        """Get a database connection with enhanced retry logic"""
         retries = 0
+        last_error = None
+        
         while retries < self.max_retries:
             try:
-                return self.pool.getconn()
+                conn = self.pool.getconn()
+                if conn.closed:
+                    logger.warning("Received closed connection from pool, attempting to reconnect")
+                    self.pool.putconn(conn)
+                    raise psycopg2.OperationalError("Connection is closed")
+                return conn
             except psycopg2.OperationalError as e:
+                last_error = e
                 retries += 1
-                if retries == self.max_retries:
-                    raise
-                time.sleep(self.retry_delay)
-                try:
-                    self._create_connection_pool()
-                except:
-                    continue
+                logger.warning(f"Connection attempt {retries} failed: {str(e)}")
+                
+                if retries < self.max_retries:
+                    time.sleep(self.retry_delay)
+                    try:
+                        logger.info("Attempting to recreate connection pool")
+                        self._create_connection_pool()
+                    except:
+                        continue
+                else:
+                    logger.error(f"Failed to get database connection after {self.max_retries} attempts")
+                    raise last_error
 
     @contextmanager
     def get_connection(self):
-        """Get a database connection from the pool with proper cleanup"""
+        """Enhanced connection context manager with SSL error handling"""
         conn = None
         try:
             conn = self._get_db_connection()
-            if conn.closed:
-                self.pool.putconn(conn)
-                raise psycopg2.OperationalError("Connection is closed")
             yield conn
-        except psycopg2.OperationalError:
-            if conn:
-                conn.close()
-                self.pool.putconn(conn)
+        except psycopg2.OperationalError as e:
+            logger.error(f"Database operational error: {str(e)}")
+            if "SSL connection has been closed unexpectedly" in str(e):
+                logger.info("Detected SSL connection failure, attempting to reconnect")
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                    self.pool.putconn(conn)
+                self._create_connection_pool()
             raise
-        except:
+        except Exception as e:
+            logger.error(f"Unexpected database error: {str(e)}")
             if conn:
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
                 self.pool.putconn(conn)
             raise
         else:
-            self.pool.putconn(conn)
+            if conn:
+                self.pool.putconn(conn)
 
     def _create_tables(self):
+        """Create necessary database tables"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # Create users table
@@ -117,6 +167,7 @@ class DatabaseManager:
                     )
                 """)
                 conn.commit()
+                logger.info("Successfully created/verified all database tables")
 
     def create_user(self, username, email, password):
         with self.get_connection() as conn:
