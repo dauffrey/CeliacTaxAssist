@@ -18,67 +18,9 @@ class ItemPrice:
     final_price: Optional[float] = None
     gf_confidence: Optional[float] = None
 
-def is_gluten_free(text: str) -> float:
-    """
-    Check if an item description indicates it's gluten-free
-    Returns a confidence score between 0 and 1
-    """
-    text = text.lower()
-    
-    # Direct indicators (highest confidence)
-    direct_indicators = ['gluten free', 'gluten-free', ' gf ', 'gf:', '(gf)', 'g-free']
-    for indicator in direct_indicators:
-        if indicator in text:
-            return 1.0
-            
-    # Partial indicators (medium confidence)
-    partial_indicators = ['gf', 'g/f', 'g-f', 'gluten']
-    for indicator in partial_indicators:
-        if indicator in text:
-            return 0.8
-            
-    # Common GF product keywords (lower confidence)
-    gf_keywords = ['rice', 'quinoa', 'corn', 'buckwheat', 'sorghum', 'millet', 'tapioca']
-    for keyword in gf_keywords:
-        if keyword in text:
-            return 0.4
-            
-    return 0.0
-
-def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
-    """
-    Enhanced image validation with detailed feedback
-    """
-    try:
-        # Check if it's a valid image format
-        image_format = imghdr.what(None, h=image_bytes)
-        if not image_format:
-            return False, "Invalid image format. Please upload a valid image file."
-        
-        # Check if it's a supported format
-        supported_formats = ['jpeg', 'jpg', 'png', 'bmp', 'tiff']
-        if image_format.lower() not in supported_formats:
-            return False, f"Unsupported image format: {image_format}. Please upload a JPEG, PNG, BMP, or TIFF file."
-        
-        # Try opening the image to verify it's not corrupted
-        img = Image.open(io.BytesIO(image_bytes))
-        
-        # Check image size
-        if img.width < 300 or img.height < 300:
-            return False, "Image resolution is too low. Please provide a clearer, higher-resolution image."
-        
-        # Check if image is too large
-        max_size = 4000  # pixels
-        if img.width > max_size or img.height > max_size:
-            return False, f"Image is too large. Maximum dimensions are {max_size}x{max_size} pixels."
-        
-        return True, ""
-    except Exception as e:
-        return False, f"Error processing image: {str(e)}"
-
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Enhanced image preprocessing for better OCR results
+    Enhanced image preprocessing specifically for receipt scanning
     """
     try:
         # Convert PIL Image to OpenCV format
@@ -86,77 +28,53 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         if len(img_array.shape) == 3:
             img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
         
-        # Increase resolution (2x upscaling)
+        # Increase resolution for better text recognition
         scale_factor = 2
         img_array = cv2.resize(img_array, None, fx=scale_factor, fy=scale_factor, 
                              interpolation=cv2.INTER_LANCZOS4)
         
-        # Apply denoising
-        img_array = cv2.fastNlMeansDenoising(img_array)
-        
         # Enhance contrast using CLAHE
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         img_array = clahe.apply(img_array)
         
-        # Apply adaptive thresholding
+        # Apply bilateral filtering for noise reduction while preserving edges
+        img_array = cv2.bilateralFilter(img_array, 9, 75, 75)
+        
+        # Apply adaptive thresholding with optimal parameters for receipt text
         img_array = cv2.adaptiveThreshold(
             img_array, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 11, 2
+            cv2.THRESH_BINARY, 15, 8
         )
+        
+        # Deskew image if needed
+        coords = np.column_stack(np.where(img_array > 0))
+        angle = cv2.minAreaRect(coords)[-1]
+        if angle < -45:
+            angle = 90 + angle
+        if abs(angle) > 0.5:  # Only rotate if angle is significant
+            (h, w) = img_array.shape[:2]
+            center = (w // 2, h // 2)
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            img_array = cv2.warpAffine(img_array, M, (w, h),
+                                     flags=cv2.INTER_CUBIC,
+                                     borderMode=cv2.BORDER_REPLICATE)
         
         # Convert back to PIL Image
         enhanced_image = Image.fromarray(img_array)
         
-        # Additional PIL enhancements
+        # Additional sharpening for text clarity
         enhanced_image = enhanced_image.filter(ImageFilter.SHARPEN)
+        enhanced_image = enhanced_image.filter(ImageFilter.UnsharpMask(radius=2, percent=150))
         
         return enhanced_image
     except Exception as e:
         raise Exception(f"Error preprocessing image: {str(e)}")
 
-def merge_multiline_items(lines: List[str]) -> List[str]:
-    """
-    Improved multi-line item merging with better pattern recognition
-    """
-    merged_lines = []
-    current_line = ""
-    price_pattern = r'\$\d+\.\d{2}'
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            if current_line:
-                merged_lines.append(current_line)
-                current_line = ""
-            continue
-        
-        # Check if line contains a price
-        has_price = bool(re.search(price_pattern, line))
-        
-        # Check if line starts with common item indicators
-        item_indicators = ['qty', 'quantity', 'item', '#', '@']
-        starts_with_indicator = any(line.lower().startswith(ind) for ind in item_indicators)
-        
-        if has_price or starts_with_indicator:
-            if current_line:
-                merged_lines.append(current_line)
-            current_line = line
-        else:
-            if current_line:
-                current_line += " " + line
-            else:
-                current_line = line
-    
-    if current_line:
-        merged_lines.append(current_line)
-    
-    return merged_lines
-
 def clean_text(text: str) -> str:
     """
-    Enhanced text cleanup for better parsing
+    Enhanced text cleanup for receipt format
     """
-    # Remove unwanted characters
+    # Remove unwanted characters while preserving essential ones
     text = re.sub(r'[^\w\s$%.:()-]', '', text)
     
     # Normalize whitespace
@@ -164,87 +82,82 @@ def clean_text(text: str) -> str:
     
     # Fix common OCR errors
     text = text.replace('S', '$').replace('s', '$')
+    text = text.replace('0O', '00').replace('O0', '00')
     
     # Normalize price formats
     text = re.sub(r'(\d+)\.(\d{2})', r'\1.\2', text)
+    
+    # Fix discount notation
+    text = text.replace('off-', 'off: -')
+    text = text.replace('discount-', 'discount: -')
     
     return text.strip()
 
 def get_items_with_prices(text: str) -> List[ItemPrice]:
     """
-    Enhanced item and price extraction with improved pattern matching
+    Enhanced item and price extraction for Masstown Market receipt format
     """
     try:
         items = []
-        common_products = [
-            "Bread", "Roll", "Muffin", "Bagel", "Cereal",
-            "Pasta", "Cookie", "Cake", "Crackers", "Pizza"
-        ]
         
         # Clean and normalize text
         text = clean_text(text)
         
-        # Split and merge multi-line items
-        lines = merge_multiline_items(text.split('\n'))
+        # Split into lines and process each line
+        lines = text.split('\n')
         
-        # Enhanced price pattern with support for various formats
+        # Enhanced price pattern for Masstown Market format
         price_pattern = (
             r'\$(\d+\.\d{2})'  # Base price
-            r'(?:\s*(?:,\s*|\s+)?'  # Optional separator
-            r'(?:'  # Start of discount group
-            r'(?:-\s*\$(\d+\.\d{2})|'  # Direct discount amount
-            r'(?:(\d+)%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))*'  # Percentage discount
-            r')'  # End of discount group
-            r')*'  # Make the entire discount group optional
+            r'(?:\s*'  # Optional whitespace
+            r'(?:\((?:Item\s+)?(?:discount\s+)?(\d+)%'  # Percentage in parentheses
+            r'(?:\s*[-:]\s*\$(\d+\.\d{2}))?\)|'  # Optional amount after percentage
+            r'\s*[-:]\s*\$(\d+\.\d{2}))?'  # Direct discount amount
         )
         
+        current_item = None
         for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
             try:
+                # Check for price matches
                 price_matches = list(re.finditer(price_pattern, line))
                 
                 if price_matches:
                     # Get the main price
                     original_price = float(price_matches[0].group(1))
                     
-                    # Calculate discount
+                    # Extract item name (everything before the price)
+                    item_name = line[:price_matches[0].start()].strip()
+                    
+                    # Handle discount
                     discount = None
                     if len(price_matches[0].groups()) > 1:
-                        # Try direct discount amount
-                        direct_discount = price_matches[0].group(2)
-                        if direct_discount:
-                            discount = float(direct_discount)
-                        else:
-                            # Try percentage discount
-                            percent = price_matches[0].group(3)
-                            discount_amount = price_matches[0].group(4)
-                            if percent and discount_amount:
-                                discount = float(discount_amount)
-                    
-                    # Extract and clean description
-                    description = line[:price_matches[0].start()].strip()
-                    description = clean_text(description)
-                    
-                    # Try to match with common product names
-                    item_name = fuzzy_match_product(description, common_products) or description.split(':')[0].strip()
+                        # Check for percentage discount
+                        discount_percent = price_matches[0].group(2)
+                        discount_amount = price_matches[0].group(3) or price_matches[0].group(4)
+                        
+                        if discount_amount:
+                            discount = float(discount_amount)
+                        elif discount_percent:
+                            # Calculate discount from percentage
+                            discount = (float(discount_percent) / 100) * original_price
                     
                     # Calculate final price
                     final_price = original_price - (discount if discount else 0)
                     
-                    # Check if it might be gluten-free
-                    gf_confidence = is_gluten_free(description)
-                    
+                    # Create ItemPrice object
                     items.append(ItemPrice(
                         item_name=item_name,
                         original_price=original_price,
-                        description=description,
+                        description=line,
                         discount=discount,
                         final_price=final_price,
-                        gf_confidence=gf_confidence
+                        gf_confidence=is_gluten_free(item_name)
                     ))
-                    
-            except re.error as e:
-                print(f"Warning: Could not process line '{line}' due to regex error: {str(e)}")
-                continue
+            
             except Exception as e:
                 print(f"Warning: Error processing line '{line}': {str(e)}")
                 continue
@@ -255,7 +168,7 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
 
 def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
     """
-    Enhanced price extraction with improved error handling and feedback
+    Extract prices from receipt image with enhanced error handling
     """
     try:
         # Validate image
@@ -263,56 +176,57 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         if not is_valid:
             raise ValueError(error_message)
         
-        # Convert bytes to image with error handling
-        try:
-            image = Image.open(io.BytesIO(image_bytes))
-        except Exception as e:
-            raise ValueError(f"Unable to open image: {str(e)}. Please ensure the image is not corrupted.")
+        # Load and preprocess image
+        image = Image.open(io.BytesIO(image_bytes))
+        processed_image = preprocess_image(image)
         
-        # Preprocess image with error handling
-        try:
-            processed_image = preprocess_image(image)
-        except Exception as e:
-            raise ValueError(f"Error during image preprocessing: {str(e)}. Please try with a clearer image.")
+        # Configure tesseract for receipt format
+        custom_config = (
+            '--oem 3 '  # Use LSTM OCR Engine
+            '--psm 6 '  # Assume uniform block of text
+            '-c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%().,-: " '
+            '-c tessedit_write_images=true'
+        )
         
-        # Extract text with improved configuration
-        try:
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_blacklist=|~`'
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
-            
-            if not text.strip():
-                raise ValueError("No text could be extracted from the image. Please ensure the receipt text is clear and readable.")
-        except Exception as e:
-            raise ValueError(f"Error during text extraction: {str(e)}. Please ensure tesseract is properly installed.")
+        # Extract text
+        text = pytesseract.image_to_string(processed_image, config=custom_config)
         
-        # Process extracted text
-        try:
-            items = get_items_with_prices(text)
-            
-            if not items:
-                raise ValueError("No valid items or prices found in the receipt. Please ensure prices are clearly visible and in standard format ($XX.XX).")
-            
-            return items
-            
-        except Exception as e:
-            raise ValueError(f"Error processing receipt text: {str(e)}")
+        if not text.strip():
+            raise ValueError("No text could be extracted. Please ensure the receipt is clearly visible.")
         
-    except ValueError as e:
-        raise ValueError(str(e))
+        # Process items
+        items = get_items_with_prices(text)
+        
+        if not items:
+            raise ValueError("No valid items or prices found. Please ensure the receipt format is correct.")
+        
+        return items
+        
     except Exception as e:
-        raise Exception(f"Unexpected error processing receipt: {str(e)}")
+        raise Exception(f"Error processing receipt: {str(e)}")
 
-def fuzzy_match_product(text: str, common_products: List[str], threshold: int = 80) -> Optional[str]:
-    """
-    Find closest matching product name using fuzzy matching
-    """
-    best_match = None
-    best_score = 0
-    
-    for product in common_products:
-        score = fuzz.ratio(text.lower(), product.lower())
-        if score > threshold and score > best_score:
-            best_match = product
-            best_score = score
-    
-    return best_match
+def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
+    """Validate image format and quality"""
+    try:
+        # Check format
+        image_format = imghdr.what(None, h=image_bytes)
+        if not image_format:
+            return False, "Invalid image format"
+        
+        # Open image
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Check dimensions
+        if image.width < 300 or image.height < 300:
+            return False, "Image resolution too low"
+        
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def is_gluten_free(text: str) -> float:
+    """Check if item is gluten-free"""
+    text = text.lower()
+    if any(indicator in text for indicator in ['gluten-free', 'gluten free', 'gf']):
+        return 1.0
+    return 0.0
