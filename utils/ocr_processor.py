@@ -6,6 +6,8 @@ import imghdr
 from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
 from decimal import Decimal
+import numpy as np
+from fuzzywuzzy import fuzz
 
 @dataclass
 class ItemPrice:
@@ -24,7 +26,7 @@ def is_gluten_free(text: str) -> float:
     text = text.lower()
     
     # Direct indicators (highest confidence)
-    direct_indicators = ['gluten free', 'gluten-free', ' gf ', 'gf:', '(gf)']
+    direct_indicators = ['gluten free', 'gluten-free', ' gf ', 'gf:', '(gf)', 'g-free']
     for indicator in direct_indicators:
         if indicator in text:
             return 1.0
@@ -36,7 +38,7 @@ def is_gluten_free(text: str) -> float:
             return 0.8
             
     # Common GF product keywords (lower confidence)
-    gf_keywords = ['rice', 'quinoa', 'corn', 'buckwheat', 'sorghum', 'millet']
+    gf_keywords = ['rice', 'quinoa', 'corn', 'buckwheat', 'sorghum', 'millet', 'tapioca']
     for keyword in gf_keywords:
         if keyword in text:
             return 0.4
@@ -67,81 +69,148 @@ def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Preprocess image for better OCR results
+    Enhanced preprocessing for better OCR results
     """
     try:
+        # Increase resolution (2x upscaling)
+        new_size = (image.width * 2, image.height * 2)
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+        
         # Convert to grayscale
         image = image.convert('L')
         
-        # Increase contrast
+        # Enhance contrast
         enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(2.5)
+        
+        # Enhance sharpness
+        enhancer = ImageEnhance.Sharpness(image)
         image = enhancer.enhance(2.0)
         
-        # Apply slight blur to reduce noise
-        image = image.filter(ImageFilter.GaussianBlur(1))
+        # Apply denoising using median filter
+        image = image.filter(ImageFilter.MedianFilter(size=3))
         
-        # Apply threshold to make text more clear
+        # Apply adaptive thresholding
         image = image.point(lambda x: 0 if x < 128 else 255, '1')
+        
+        # Additional sharpening after threshold
+        image = image.filter(ImageFilter.SHARPEN)
         
         return image
     except Exception as e:
         raise Exception(f"Error preprocessing image: {str(e)}")
 
+def merge_multiline_items(lines: List[str]) -> List[str]:
+    """
+    Merge multi-line items into single lines
+    """
+    merged_lines = []
+    current_line = ""
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current_line:
+                merged_lines.append(current_line)
+                current_line = ""
+            continue
+        
+        # If line contains price, it's likely the end of an item
+        if re.search(r'\$\d+\.\d{2}', line):
+            if current_line:
+                current_line += " " + line
+                merged_lines.append(current_line)
+                current_line = ""
+            else:
+                merged_lines.append(line)
+        else:
+            # If no price, it's probably part of item description
+            if current_line:
+                current_line += " " + line
+            else:
+                current_line = line
+    
+    # Add any remaining line
+    if current_line:
+        merged_lines.append(current_line)
+    
+    return merged_lines
+
+def fuzzy_match_product(text: str, common_products: List[str], threshold: int = 80) -> Optional[str]:
+    """
+    Find closest matching product name using fuzzy matching
+    """
+    best_match = None
+    best_score = 0
+    
+    for product in common_products:
+        score = fuzz.ratio(text.lower(), product.lower())
+        if score > threshold and score > best_score:
+            best_match = product
+            best_score = score
+    
+    return best_match
+
 def get_items_with_prices(text: str) -> List[ItemPrice]:
     """
-    Extract items with their prices and descriptions
-    Returns a list of ItemPrice objects
+    Extract items with their prices and descriptions with improved handling
     """
     items = []
+    common_products = [
+        "Bread", "Roll", "Muffin", "Bagel", "Cereal",
+        "Pasta", "Cookie", "Cake", "Crackers", "Pizza"
+    ]
     
-    # Split text into lines for better processing
-    lines = text.split('\n')
-    current_item = None
+    # Split and merge multi-line items
+    lines = merge_multiline_items(text.split('\n'))
     
     for line in lines:
         line = line.strip()
         if not line:
             continue
-            
-        # Pattern to match prices with optional descriptions
-        price_match = re.search(r'\$\s*(\d+[.,]\d{2})', line)
         
-        if price_match:
-            price = float(price_match.group(1).replace(',', '.'))
-            # Extract item name and description
-            description = line[:price_match.start()].strip()
-            if not description and current_item:
-                description = current_item
+        # Updated price pattern to handle various formats including discounts
+        price_pattern = r'\$(\d+\.\d{2})(?:\s*(?:,\s*|\s+)?(?:(?:-\s*\$(\d+\.\d{2})|(?:\d+%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))))?'
+        price_matches = list(re.finditer(price_pattern, line))
+        
+        if price_matches:
+            # Get the main price
+            original_price = float(price_matches[0].group(1))
             
-            if description:
-                # Check if it might be gluten-free
-                gf_confidence = is_gluten_free(description)
-                
-                # Look for discount
-                discount_match = re.search(r'-\$\s*(\d+[.,]\d{2})', line)
-                discount = float(discount_match.group(1).replace(',', '.')) if discount_match else None
-                
-                final_price = price - discount if discount else price
-                
-                items.append(ItemPrice(
-                    item_name=description.split(':')[0].strip(),
-                    original_price=price,
-                    description=description,
-                    discount=discount,
-                    final_price=final_price,
-                    gf_confidence=gf_confidence
-                ))
-                current_item = None
-        else:
-            # This might be an item description without a price
-            current_item = line
+            # Get discount if present (either direct amount or calculated from percentage)
+            discount = None
+            if len(price_matches[0].groups()) > 1:
+                discount_amount = price_matches[0].group(2) or price_matches[0].group(3)
+                if discount_amount:
+                    discount = float(discount_amount)
+            
+            # Extract item description (everything before the first price)
+            description = line[:price_matches[0].start()].strip()
+            description = re.sub(r'\s+', ' ', description)  # Clean up whitespace
+            
+            # Try to match with common product names
+            item_name = fuzzy_match_product(description, common_products) or description.split(':')[0].strip()
+            
+            # Calculate final price
+            final_price = original_price - (discount if discount else 0)
+            
+            # Check if it might be gluten-free
+            gf_confidence = is_gluten_free(description)
+            
+            items.append(ItemPrice(
+                item_name=item_name,
+                original_price=original_price,
+                description=description,
+                discount=discount,
+                final_price=final_price,
+                gf_confidence=gf_confidence
+            ))
     
     return items
 
 def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
     """
-    Extract items and prices from receipt image using OCR
-    Returns a list of ItemPrice objects or None if processing fails
+    Extract items and prices from receipt image using enhanced OCR
     """
     try:
         # Validate image
@@ -155,17 +224,14 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         # Preprocess image
         processed_image = preprocess_image(image)
         
-        # Extract text from image with improved confidence
-        custom_config = r'--oem 3 --psm 6'
+        # Extract text with improved configuration
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_blacklist=|~`'
         text = pytesseract.image_to_string(processed_image, config=custom_config)
         
         # Get items with prices
         items = get_items_with_prices(text)
         
-        if not items:
-            return None
-        
-        return items
+        return items if items else None
         
     except Exception as e:
         raise Exception(f"Error processing receipt: {str(e)}")
