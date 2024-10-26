@@ -30,16 +30,16 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         img_array = cv2.resize(img_array, None, fx=scale_factor, fy=scale_factor, 
                              interpolation=cv2.INTER_LANCZOS4)
         
-        # Enhance contrast using CLAHE
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        # Enhance contrast for better text recognition
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         img_array = clahe.apply(img_array)
         
-        # Deskew image if needed
+        # Deskew image to handle any rotation
         coords = np.column_stack(np.where(img_array > 0))
         angle = cv2.minAreaRect(coords)[-1]
         if angle < -45:
             angle = 90 + angle
-        if abs(angle) > 0.5:  # Only rotate if angle is significant
+        if abs(angle) > 0.5:
             (h, w) = img_array.shape[:2]
             center = (w // 2, h // 2)
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -47,13 +47,13 @@ def preprocess_image(image: Image.Image) -> Image.Image:
                                      flags=cv2.INTER_CUBIC,
                                      borderMode=cv2.BORDER_REPLICATE)
         
-        # Apply bilateral filtering for noise reduction while preserving edges
+        # Bilateral filtering for noise reduction while preserving edges
         img_array = cv2.bilateralFilter(img_array, 9, 75, 75)
         
-        # Apply adaptive thresholding with optimal parameters for receipt text
+        # Adaptive thresholding optimized for receipt text
         img_array = cv2.adaptiveThreshold(
             img_array, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 15, 8
+            cv2.THRESH_BINARY, 21, 11
         )
         
         # Convert back to PIL Image
@@ -76,75 +76,76 @@ def clean_text(text: str) -> str:
     text = text.replace('S', '$').replace('s', '$')
     text = text.replace('0O', '00').replace('O0', '00')
     
-    # Maintain proper spacing for right-aligned prices
-    text = re.sub(r'\s{2,}', '  ', text)
+    # Standardize discount notation
+    text = text.replace('Item discount', 'Item discount ')
+    text = text.replace('Discount:', 'Item discount ')
+    text = text.replace('DISCOUNT:', 'Item discount ')
     
     # Normalize price formats while preserving parentheses
     text = re.sub(r'(\d+)\.(\d{2})', r'\1.\2', text)
     
-    # Fix discount notation
-    text = text.replace('Item discount', 'Item discount ')
-    text = text.replace('off:', 'off: ')
-    text = text.replace('discount:', 'discount: ')
-    
     return text.strip()
 
+def process_multiline_item(lines: List[str], start_idx: int) -> Tuple[Optional[Dict], int]:
+    """Process multi-line items with discounts"""
+    if start_idx >= len(lines):
+        return None, start_idx
+        
+    current_line = lines[start_idx].strip()
+    
+    # Match main item line with price
+    main_pattern = r'^(?P<name>.*?)\s+\$(?P<price>\d+\.\d{2})$'
+    main_match = re.match(main_pattern, current_line)
+    
+    if not main_match:
+        return None, start_idx
+        
+    item_data = {
+        'name': main_match.group('name').strip(),
+        'price': float(main_match.group('price')),
+        'discount': None,
+        'description': current_line
+    }
+    
+    # Check next line for discount
+    if start_idx + 1 < len(lines):
+        next_line = lines[start_idx + 1].strip()
+        discount_pattern = r'^Item\s+discount\s+(?P<percent>\d+)%\s*\((?:\$)?(?P<amount>\d+\.\d{2})\)$'
+        discount_match = re.match(discount_pattern, next_line)
+        
+        if discount_match:
+            item_data['discount'] = float(discount_match.group('amount'))
+            item_data['description'] += f"\n{next_line}"
+            return item_data, start_idx + 2
+    
+    return item_data, start_idx + 1
+
 def get_items_with_prices(text: str) -> List[ItemPrice]:
-    """Enhanced price extraction for Masstown Market receipt format"""
+    """Enhanced item and price extraction for Masstown Market receipt format"""
     try:
         items = []
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
         
-        # Clean and normalize text
-        text = clean_text(text)
-        
-        # Split into lines and process each line
-        lines = text.split('\n')
-        
-        # Enhanced price pattern as provided
-        price_pattern = (
-            r'(?P<name>.*?)\s*\$(?P<price>\d+\.\d{2})'
-            r'(?:\s*(?:Item\s+discount\s+(?P<discount_percent>\d+)%|\((?:\$)?(?P<discount>\d+\.\d{2})\)))?'
-        )
-        
-        current_item = None
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
+        i = 0
+        while i < len(lines):
             try:
-                # Check for price matches
-                match = re.match(price_pattern, line)
+                item_data, next_i = process_multiline_item(lines, i)
                 
-                if match:
-                    # Extract named groups
-                    item_name = match.group('name').strip()
-                    original_price = float(match.group('price'))
-                    
-                    # Handle discount
-                    discount = None
-                    if match.group('discount_percent'):
-                        percent = float(match.group('discount_percent'))
-                        discount = (percent / 100) * original_price
-                    elif match.group('discount'):
-                        discount = float(match.group('discount'))
-                    
-                    # Calculate final price
-                    final_price = original_price - (discount if discount else 0)
-                    
-                    # Create ItemPrice object
+                if item_data:
                     items.append(ItemPrice(
-                        item_name=item_name,
-                        original_price=original_price,
-                        description=line,
-                        discount=discount,
-                        final_price=final_price,
-                        gf_confidence=is_gluten_free(item_name)
+                        item_name=item_data['name'],
+                        original_price=item_data['price'],
+                        description=item_data['description'],
+                        discount=item_data['discount'],
+                        final_price=item_data['price'] - (item_data['discount'] or 0),
+                        gf_confidence=is_gluten_free(item_data['name'])
                     ))
+                
+                i = next_i
             
             except Exception as e:
-                print(f"Warning: Error processing line '{line}': {str(e)}")
-                continue
+                print(f"Warning: Error processing line: {str(e)}")
+                i += 1
         
         return items
     except Exception as e:
@@ -162,10 +163,10 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         image = Image.open(io.BytesIO(image_bytes))
         processed_image = preprocess_image(image)
         
-        # Configure tesseract for receipt format
+        # Configure tesseract for Masstown Market receipt format
         custom_config = (
-            '--oem 3 '  # Use LSTM OCR Engine
-            '--psm 6 '  # Assume uniform block of text
+            '--oem 3 '  # LSTM OCR Engine
+            '--psm 6 '  # Uniform block of text
             '-c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%().,-: " '
             '-c tessedit_write_images=true'
         )
@@ -175,6 +176,9 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         
         if not text.strip():
             raise ValueError("No text could be extracted. Please ensure the receipt is clearly visible.")
+        
+        # Clean text
+        text = clean_text(text)
         
         # Process items
         items = get_items_with_prices(text)
