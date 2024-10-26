@@ -33,13 +33,6 @@ st.set_page_config(
 with open("assets/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# Skip Navigation Link for Keyboard Users
-st.markdown("""
-    <a href="#main-content" class="skip-link">
-        Skip to main content
-    </a>
-""", unsafe_allow_html=True)
-
 # Initialize database
 @st.cache_resource
 def get_database():
@@ -49,6 +42,14 @@ db = get_database()
 
 # Authentication
 user_id = render_auth(db)
+
+# Skip Navigation Link for Keyboard Users (only shown after login)
+if user_id is not None:
+    st.markdown("""
+        <a href="#main-content" class="skip-link">
+            Skip to main content
+        </a>
+    """, unsafe_allow_html=True)
 
 # Main app layout with Canadian branding
 st.markdown("""
@@ -114,27 +115,7 @@ with tab2:
     render_price_comparison(db, user_id)
 
 with tab3:
-    st.markdown("""
-        <div role="region" aria-label="Receipt Scanner">
-            <div style='background: var(--background-primary); padding: 20px; border-radius: 16px; text-align: center;'>
-                <span aria-hidden="true" style='font-size: 2rem;'>📸</span>
-                <h2>Scan Your Receipt</h2>
-                <p>Upload a receipt image to automatically extract prices</p>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    price_data = render_receipt_scanner()
-    if price_data and price_data.get("items"):
-        for item in price_data["items"]:
-            db.add_product(
-                product_name=item["product_name"],
-                gf_price=item["gf_price"],
-                regular_price=item["regular_price"],
-                user_id=user_id
-            )
-        st.success(f"✅ {len(price_data['items'])} products added successfully from receipt!")
-        st.rerun()
+    render_receipt_scanner()
 
 with tab4:
     if products := db.get_user_products(user_id):
