@@ -7,7 +7,6 @@ from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
 import numpy as np
 import cv2
-from fuzzywuzzy import fuzz
 
 @dataclass
 class ItemPrice:
@@ -19,9 +18,7 @@ class ItemPrice:
     gf_confidence: Optional[float] = None
 
 def preprocess_image(image: Image.Image) -> Image.Image:
-    """
-    Enhanced image preprocessing specifically for receipt scanning
-    """
+    """Enhanced image preprocessing for Masstown Market receipts"""
     try:
         # Convert PIL Image to OpenCV format
         img_array = np.array(image)
@@ -37,15 +34,6 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         img_array = clahe.apply(img_array)
         
-        # Apply bilateral filtering for noise reduction while preserving edges
-        img_array = cv2.bilateralFilter(img_array, 9, 75, 75)
-        
-        # Apply adaptive thresholding with optimal parameters for receipt text
-        img_array = cv2.adaptiveThreshold(
-            img_array, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 15, 8
-        )
-        
         # Deskew image if needed
         coords = np.column_stack(np.where(img_array > 0))
         angle = cv2.minAreaRect(coords)[-1]
@@ -59,6 +47,15 @@ def preprocess_image(image: Image.Image) -> Image.Image:
                                      flags=cv2.INTER_CUBIC,
                                      borderMode=cv2.BORDER_REPLICATE)
         
+        # Apply bilateral filtering for noise reduction while preserving edges
+        img_array = cv2.bilateralFilter(img_array, 9, 75, 75)
+        
+        # Apply adaptive thresholding with optimal parameters for receipt text
+        img_array = cv2.adaptiveThreshold(
+            img_array, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 15, 8
+        )
+        
         # Convert back to PIL Image
         enhanced_image = Image.fromarray(img_array)
         
@@ -71,32 +68,29 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         raise Exception(f"Error preprocessing image: {str(e)}")
 
 def clean_text(text: str) -> str:
-    """
-    Enhanced text cleanup for receipt format
-    """
-    # Remove unwanted characters while preserving essential ones
-    text = re.sub(r'[^\w\s$%.:()-]', '', text)
-    
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text)
+    """Enhanced text cleanup for Masstown Market receipt format"""
+    # Preserve price parentheses and discount indicators
+    text = re.sub(r'[^\w\s$%():.-]', '', text)
     
     # Fix common OCR errors
     text = text.replace('S', '$').replace('s', '$')
     text = text.replace('0O', '00').replace('O0', '00')
     
-    # Normalize price formats
+    # Maintain proper spacing for right-aligned prices
+    text = re.sub(r'\s{2,}', '  ', text)
+    
+    # Normalize price formats while preserving parentheses
     text = re.sub(r'(\d+)\.(\d{2})', r'\1.\2', text)
     
     # Fix discount notation
-    text = text.replace('off-', 'off: -')
-    text = text.replace('discount-', 'discount: -')
+    text = text.replace('Item discount', 'Item discount ')
+    text = text.replace('off:', 'off: ')
+    text = text.replace('discount:', 'discount: ')
     
     return text.strip()
 
 def get_items_with_prices(text: str) -> List[ItemPrice]:
-    """
-    Enhanced item and price extraction for Masstown Market receipt format
-    """
+    """Enhanced price extraction for Masstown Market receipt format"""
     try:
         items = []
         
@@ -106,13 +100,10 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
         # Split into lines and process each line
         lines = text.split('\n')
         
-        # Enhanced price pattern for Masstown Market format
+        # Enhanced price pattern as provided
         price_pattern = (
-            r'\$(\d+\.\d{2})'  # Base price
-            r'(?:\s*'  # Optional whitespace
-            r'(?:\((?:Item\s+)?(?:discount\s+)?(\d+)%'  # Percentage in parentheses
-            r'(?:\s*[-:]\s*\$(\d+\.\d{2}))?\)|'  # Optional amount after percentage
-            r'\s*[-:]\s*\$(\d+\.\d{2}))?'  # Direct discount amount
+            r'(?P<name>.*?)\s*\$(?P<price>\d+\.\d{2})'
+            r'(?:\s*(?:Item\s+discount\s+(?P<discount_percent>\d+)%|\((?:\$)?(?P<discount>\d+\.\d{2})\)))?'
         )
         
         current_item = None
@@ -123,27 +114,20 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
             
             try:
                 # Check for price matches
-                price_matches = list(re.finditer(price_pattern, line))
+                match = re.match(price_pattern, line)
                 
-                if price_matches:
-                    # Get the main price
-                    original_price = float(price_matches[0].group(1))
-                    
-                    # Extract item name (everything before the price)
-                    item_name = line[:price_matches[0].start()].strip()
+                if match:
+                    # Extract named groups
+                    item_name = match.group('name').strip()
+                    original_price = float(match.group('price'))
                     
                     # Handle discount
                     discount = None
-                    if len(price_matches[0].groups()) > 1:
-                        # Check for percentage discount
-                        discount_percent = price_matches[0].group(2)
-                        discount_amount = price_matches[0].group(3) or price_matches[0].group(4)
-                        
-                        if discount_amount:
-                            discount = float(discount_amount)
-                        elif discount_percent:
-                            # Calculate discount from percentage
-                            discount = (float(discount_percent) / 100) * original_price
+                    if match.group('discount_percent'):
+                        percent = float(match.group('discount_percent'))
+                        discount = (percent / 100) * original_price
+                    elif match.group('discount'):
+                        discount = float(match.group('discount'))
                     
                     # Calculate final price
                     final_price = original_price - (discount if discount else 0)
@@ -167,9 +151,7 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
         raise Exception(f"Error extracting prices: {str(e)}")
 
 def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
-    """
-    Extract prices from receipt image with enhanced error handling
-    """
+    """Extract prices from receipt image with enhanced error handling"""
     try:
         # Validate image
         is_valid, error_message = validate_image(image_bytes)
