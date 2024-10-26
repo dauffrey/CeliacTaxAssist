@@ -1,5 +1,7 @@
 {pkgs}: {
   deps = [
+    pkgs.libGLU
+    pkgs.libGL
     pkgs.rustc
     pkgs.libiconv
     pkgs.cargo

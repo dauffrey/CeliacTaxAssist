@@ -5,8 +5,8 @@ import io
 import imghdr
 from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
-from decimal import Decimal
 import numpy as np
+import cv2
 from fuzzywuzzy import fuzz
 
 @dataclass
@@ -47,8 +47,7 @@ def is_gluten_free(text: str) -> float:
 
 def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
     """
-    Validate image format and content
-    Returns: (is_valid, error_message)
+    Enhanced image validation with detailed feedback
     """
     try:
         # Check if it's a valid image format
@@ -62,50 +61,66 @@ def validate_image(image_bytes: bytes) -> Tuple[bool, str]:
             return False, f"Unsupported image format: {image_format}. Please upload a JPEG, PNG, BMP, or TIFF file."
         
         # Try opening the image to verify it's not corrupted
-        Image.open(io.BytesIO(image_bytes))
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        # Check image size
+        if img.width < 300 or img.height < 300:
+            return False, "Image resolution is too low. Please provide a clearer, higher-resolution image."
+        
+        # Check if image is too large
+        max_size = 4000  # pixels
+        if img.width > max_size or img.height > max_size:
+            return False, f"Image is too large. Maximum dimensions are {max_size}x{max_size} pixels."
+        
         return True, ""
     except Exception as e:
         return False, f"Error processing image: {str(e)}"
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Enhanced preprocessing for better OCR results
+    Enhanced image preprocessing for better OCR results
     """
     try:
+        # Convert PIL Image to OpenCV format
+        img_array = np.array(image)
+        if len(img_array.shape) == 3:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        
         # Increase resolution (2x upscaling)
-        new_size = (image.width * 2, image.height * 2)
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
+        scale_factor = 2
+        img_array = cv2.resize(img_array, None, fx=scale_factor, fy=scale_factor, 
+                             interpolation=cv2.INTER_LANCZOS4)
         
-        # Convert to grayscale
-        image = image.convert('L')
+        # Apply denoising
+        img_array = cv2.fastNlMeansDenoising(img_array)
         
-        # Enhance contrast
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.5)
-        
-        # Enhance sharpness
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(2.0)
-        
-        # Apply denoising using median filter
-        image = image.filter(ImageFilter.MedianFilter(size=3))
+        # Enhance contrast using CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        img_array = clahe.apply(img_array)
         
         # Apply adaptive thresholding
-        image = image.point(lambda x: 0 if x < 128 else 255, '1')
+        img_array = cv2.adaptiveThreshold(
+            img_array, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
         
-        # Additional sharpening after threshold
-        image = image.filter(ImageFilter.SHARPEN)
+        # Convert back to PIL Image
+        enhanced_image = Image.fromarray(img_array)
         
-        return image
+        # Additional PIL enhancements
+        enhanced_image = enhanced_image.filter(ImageFilter.SHARPEN)
+        
+        return enhanced_image
     except Exception as e:
         raise Exception(f"Error preprocessing image: {str(e)}")
 
 def merge_multiline_items(lines: List[str]) -> List[str]:
     """
-    Merge multi-line items into single lines
+    Improved multi-line item merging with better pattern recognition
     """
     merged_lines = []
     current_line = ""
+    price_pattern = r'\$\d+\.\d{2}'
     
     for line in lines:
         line = line.strip()
@@ -115,45 +130,49 @@ def merge_multiline_items(lines: List[str]) -> List[str]:
                 current_line = ""
             continue
         
-        # If line contains price, it's likely the end of an item
-        if re.search(r'\$\d+\.\d{2}', line):
+        # Check if line contains a price
+        has_price = bool(re.search(price_pattern, line))
+        
+        # Check if line starts with common item indicators
+        item_indicators = ['qty', 'quantity', 'item', '#', '@']
+        starts_with_indicator = any(line.lower().startswith(ind) for ind in item_indicators)
+        
+        if has_price or starts_with_indicator:
             if current_line:
-                current_line += " " + line
                 merged_lines.append(current_line)
-                current_line = ""
-            else:
-                merged_lines.append(line)
+            current_line = line
         else:
-            # If no price, it's probably part of item description
             if current_line:
                 current_line += " " + line
             else:
                 current_line = line
     
-    # Add any remaining line
     if current_line:
         merged_lines.append(current_line)
     
     return merged_lines
 
-def fuzzy_match_product(text: str, common_products: List[str], threshold: int = 80) -> Optional[str]:
+def clean_text(text: str) -> str:
     """
-    Find closest matching product name using fuzzy matching
+    Enhanced text cleanup for better parsing
     """
-    best_match = None
-    best_score = 0
+    # Remove unwanted characters
+    text = re.sub(r'[^\w\s$%.:()-]', '', text)
     
-    for product in common_products:
-        score = fuzz.ratio(text.lower(), product.lower())
-        if score > threshold and score > best_score:
-            best_match = product
-            best_score = score
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text)
     
-    return best_match
+    # Fix common OCR errors
+    text = text.replace('S', '$').replace('s', '$')
+    
+    # Normalize price formats
+    text = re.sub(r'(\d+)\.(\d{2})', r'\1.\2', text)
+    
+    return text.strip()
 
 def get_items_with_prices(text: str) -> List[ItemPrice]:
     """
-    Extract items with their prices and descriptions with improved handling
+    Enhanced item and price extraction with improved pattern matching
     """
     try:
         items = []
@@ -162,17 +181,24 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
             "Pasta", "Cookie", "Cake", "Crackers", "Pizza"
         ]
         
+        # Clean and normalize text
+        text = clean_text(text)
+        
         # Split and merge multi-line items
         lines = merge_multiline_items(text.split('\n'))
         
-        # Updated price pattern with corrected regex as per manager's request
-        price_pattern = r'\$(\d+\.\d{2})(?:\s*(?:,\s*|\s+)?(?:(?:-\s*\$(\d+\.\d{2})|(?:\d+%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))))*'
+        # Enhanced price pattern with support for various formats
+        price_pattern = (
+            r'\$(\d+\.\d{2})'  # Base price
+            r'(?:\s*(?:,\s*|\s+)?'  # Optional separator
+            r'(?:'  # Start of discount group
+            r'(?:-\s*\$(\d+\.\d{2})|'  # Direct discount amount
+            r'(?:(\d+)%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))*'  # Percentage discount
+            r')'  # End of discount group
+            r')*'  # Make the entire discount group optional
+        )
         
         for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
             try:
                 price_matches = list(re.finditer(price_pattern, line))
                 
@@ -180,16 +206,23 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
                     # Get the main price
                     original_price = float(price_matches[0].group(1))
                     
-                    # Get discount if present (either direct amount or calculated from percentage)
+                    # Calculate discount
                     discount = None
                     if len(price_matches[0].groups()) > 1:
-                        discount_amount = price_matches[0].group(2) or price_matches[0].group(3)
-                        if discount_amount:
-                            discount = float(discount_amount)
+                        # Try direct discount amount
+                        direct_discount = price_matches[0].group(2)
+                        if direct_discount:
+                            discount = float(direct_discount)
+                        else:
+                            # Try percentage discount
+                            percent = price_matches[0].group(3)
+                            discount_amount = price_matches[0].group(4)
+                            if percent and discount_amount:
+                                discount = float(discount_amount)
                     
-                    # Extract item description (everything before the first price)
+                    # Extract and clean description
                     description = line[:price_matches[0].start()].strip()
-                    description = re.sub(r'\s+', ' ', description)  # Clean up whitespace
+                    description = clean_text(description)
                     
                     # Try to match with common product names
                     item_name = fuzzy_match_product(description, common_products) or description.split(':')[0].strip()
@@ -208,9 +241,12 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
                         final_price=final_price,
                         gf_confidence=gf_confidence
                     ))
+                    
             except re.error as e:
-                # Handle regex-specific errors for each line
-                print(f"Warning: Could not process line due to regex error: {str(e)}")
+                print(f"Warning: Could not process line '{line}' due to regex error: {str(e)}")
+                continue
+            except Exception as e:
+                print(f"Warning: Error processing line '{line}': {str(e)}")
                 continue
         
         return items
@@ -219,7 +255,7 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
 
 def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
     """
-    Extract items and prices from receipt image using enhanced OCR with improved error handling
+    Enhanced price extraction with improved error handling and feedback
     """
     try:
         # Validate image
@@ -227,13 +263,13 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         if not is_valid:
             raise ValueError(error_message)
         
-        # Convert bytes to image
+        # Convert bytes to image with error handling
         try:
             image = Image.open(io.BytesIO(image_bytes))
         except Exception as e:
             raise ValueError(f"Unable to open image: {str(e)}. Please ensure the image is not corrupted.")
         
-        # Preprocess image
+        # Preprocess image with error handling
         try:
             processed_image = preprocess_image(image)
         except Exception as e:
@@ -249,23 +285,34 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         except Exception as e:
             raise ValueError(f"Error during text extraction: {str(e)}. Please ensure tesseract is properly installed.")
         
-        # Get items with prices
+        # Process extracted text
         try:
             items = get_items_with_prices(text)
             
             if not items:
-                return None
+                raise ValueError("No valid items or prices found in the receipt. Please ensure prices are clearly visible and in standard format ($XX.XX).")
             
             return items
             
-        except re.error as e:
-            raise ValueError(f"Error parsing prices: {str(e)}. Please ensure prices are in standard format ($XX.XX).")
         except Exception as e:
             raise ValueError(f"Error processing receipt text: {str(e)}")
         
     except ValueError as e:
-        # Propagate user-friendly error messages
         raise ValueError(str(e))
     except Exception as e:
-        # Catch any other unexpected errors
         raise Exception(f"Unexpected error processing receipt: {str(e)}")
+
+def fuzzy_match_product(text: str, common_products: List[str], threshold: int = 80) -> Optional[str]:
+    """
+    Find closest matching product name using fuzzy matching
+    """
+    best_match = None
+    best_score = 0
+    
+    for product in common_products:
+        score = fuzz.ratio(text.lower(), product.lower())
+        if score > threshold and score > best_score:
+            best_match = product
+            best_score = score
+    
+    return best_match
