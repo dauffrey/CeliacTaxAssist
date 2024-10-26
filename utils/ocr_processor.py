@@ -155,62 +155,71 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
     """
     Extract items with their prices and descriptions with improved handling
     """
-    items = []
-    common_products = [
-        "Bread", "Roll", "Muffin", "Bagel", "Cereal",
-        "Pasta", "Cookie", "Cake", "Crackers", "Pizza"
-    ]
-    
-    # Split and merge multi-line items
-    lines = merge_multiline_items(text.split('\n'))
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    try:
+        items = []
+        common_products = [
+            "Bread", "Roll", "Muffin", "Bagel", "Cereal",
+            "Pasta", "Cookie", "Cake", "Crackers", "Pizza"
+        ]
         
-        # Updated price pattern to handle various formats including discounts
-        price_pattern = r'\$(\d+\.\d{2})(?:\s*(?:,\s*|\s+)?(?:(?:-\s*\$(\d+\.\d{2})|(?:\d+%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))))?'
-        price_matches = list(re.finditer(price_pattern, line))
+        # Split and merge multi-line items
+        lines = merge_multiline_items(text.split('\n'))
         
-        if price_matches:
-            # Get the main price
-            original_price = float(price_matches[0].group(1))
+        # Updated price pattern with corrected regex as per manager's request
+        price_pattern = r'\$(\d+\.\d{2})(?:\s*(?:,\s*|\s+)?(?:(?:-\s*\$(\d+\.\d{2})|(?:\d+%\s*(?:off|discount):?\s*-?\$?(\d+\.\d{2}))))*'
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
             
-            # Get discount if present (either direct amount or calculated from percentage)
-            discount = None
-            if len(price_matches[0].groups()) > 1:
-                discount_amount = price_matches[0].group(2) or price_matches[0].group(3)
-                if discount_amount:
-                    discount = float(discount_amount)
-            
-            # Extract item description (everything before the first price)
-            description = line[:price_matches[0].start()].strip()
-            description = re.sub(r'\s+', ' ', description)  # Clean up whitespace
-            
-            # Try to match with common product names
-            item_name = fuzzy_match_product(description, common_products) or description.split(':')[0].strip()
-            
-            # Calculate final price
-            final_price = original_price - (discount if discount else 0)
-            
-            # Check if it might be gluten-free
-            gf_confidence = is_gluten_free(description)
-            
-            items.append(ItemPrice(
-                item_name=item_name,
-                original_price=original_price,
-                description=description,
-                discount=discount,
-                final_price=final_price,
-                gf_confidence=gf_confidence
-            ))
-    
-    return items
+            try:
+                price_matches = list(re.finditer(price_pattern, line))
+                
+                if price_matches:
+                    # Get the main price
+                    original_price = float(price_matches[0].group(1))
+                    
+                    # Get discount if present (either direct amount or calculated from percentage)
+                    discount = None
+                    if len(price_matches[0].groups()) > 1:
+                        discount_amount = price_matches[0].group(2) or price_matches[0].group(3)
+                        if discount_amount:
+                            discount = float(discount_amount)
+                    
+                    # Extract item description (everything before the first price)
+                    description = line[:price_matches[0].start()].strip()
+                    description = re.sub(r'\s+', ' ', description)  # Clean up whitespace
+                    
+                    # Try to match with common product names
+                    item_name = fuzzy_match_product(description, common_products) or description.split(':')[0].strip()
+                    
+                    # Calculate final price
+                    final_price = original_price - (discount if discount else 0)
+                    
+                    # Check if it might be gluten-free
+                    gf_confidence = is_gluten_free(description)
+                    
+                    items.append(ItemPrice(
+                        item_name=item_name,
+                        original_price=original_price,
+                        description=description,
+                        discount=discount,
+                        final_price=final_price,
+                        gf_confidence=gf_confidence
+                    ))
+            except re.error as e:
+                # Handle regex-specific errors for each line
+                print(f"Warning: Could not process line due to regex error: {str(e)}")
+                continue
+        
+        return items
+    except Exception as e:
+        raise Exception(f"Error extracting prices: {str(e)}")
 
 def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
     """
-    Extract items and prices from receipt image using enhanced OCR
+    Extract items and prices from receipt image using enhanced OCR with improved error handling
     """
     try:
         # Validate image
@@ -219,34 +228,44 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
             raise ValueError(error_message)
         
         # Convert bytes to image
-        image = Image.open(io.BytesIO(image_bytes))
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+        except Exception as e:
+            raise ValueError(f"Unable to open image: {str(e)}. Please ensure the image is not corrupted.")
         
         # Preprocess image
-        processed_image = preprocess_image(image)
+        try:
+            processed_image = preprocess_image(image)
+        except Exception as e:
+            raise ValueError(f"Error during image preprocessing: {str(e)}. Please try with a clearer image.")
         
         # Extract text with improved configuration
-        custom_config = r'--oem 3 --psm 6 -c tessedit_char_blacklist=|~`'
-        text = pytesseract.image_to_string(processed_image, config=custom_config)
+        try:
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_blacklist=|~`'
+            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            if not text.strip():
+                raise ValueError("No text could be extracted from the image. Please ensure the receipt text is clear and readable.")
+        except Exception as e:
+            raise ValueError(f"Error during text extraction: {str(e)}. Please ensure tesseract is properly installed.")
         
         # Get items with prices
-        items = get_items_with_prices(text)
+        try:
+            items = get_items_with_prices(text)
+            
+            if not items:
+                return None
+            
+            return items
+            
+        except re.error as e:
+            raise ValueError(f"Error parsing prices: {str(e)}. Please ensure prices are in standard format ($XX.XX).")
+        except Exception as e:
+            raise ValueError(f"Error processing receipt text: {str(e)}")
         
-        return items if items else None
-        
+    except ValueError as e:
+        # Propagate user-friendly error messages
+        raise ValueError(str(e))
     except Exception as e:
-        raise Exception(f"Error processing receipt: {str(e)}")
-
-def get_highest_prices(prices: Optional[List[float]], num_prices: int = 2) -> Tuple[Optional[float], Optional[float]]:
-    """
-    Get the highest prices from the list
-    """
-    if not prices or len(prices) < num_prices:
-        return None, None
-    
-    # Sort prices and remove duplicates
-    unique_sorted_prices = sorted(set(prices), reverse=True)
-    
-    if len(unique_sorted_prices) < num_prices:
-        return None, None
-    
-    return unique_sorted_prices[0], unique_sorted_prices[1]
+        # Catch any other unexpected errors
+        raise Exception(f"Unexpected error processing receipt: {str(e)}")
