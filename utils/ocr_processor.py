@@ -7,33 +7,12 @@ from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
 import numpy as np
 import cv2
-import signal
-from functools import wraps
+import concurrent.futures
 import time
 
 class OCRTimeoutError(Exception):
     """Raised when OCR processing exceeds timeout limit"""
     pass
-
-def timeout_handler(signum, frame):
-    raise OCRTimeoutError("OCR processing timed out")
-
-def with_timeout(timeout=30):
-    """Decorator to add timeout to a function"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Set the signal handler and a timeout
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout)
-            try:
-                result = func(*args, **kwargs)
-            finally:
-                # Disable the alarm
-                signal.alarm(0)
-            return result
-        return wrapper
-    return decorator
 
 @dataclass
 class ItemPrice:
@@ -178,10 +157,19 @@ def process_multiline_item(lines: List[str], start_idx: int) -> Tuple[Optional[D
     except Exception as e:
         raise Exception(f"Error processing line: {str(e)}")
 
-@with_timeout(30)  # Set 30-second timeout for OCR processing
-def perform_ocr(image: Image.Image, config: str) -> str:
-    """Perform OCR with timeout"""
-    return pytesseract.image_to_string(image, config=config)
+def perform_ocr(image: Image.Image, config: str, timeout: int = 30) -> str:
+    """Perform OCR with threading-safe timeout"""
+    def _ocr_task():
+        return pytesseract.image_to_string(image, config=config)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_ocr_task)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise OCRTimeoutError("OCR processing timed out")
+        except Exception as e:
+            raise Exception(f"Error during OCR processing: {str(e)}")
 
 def get_items_with_prices(text: str) -> List[ItemPrice]:
     """Enhanced item and price extraction for Masstown Market receipt format"""
@@ -216,8 +204,10 @@ def get_items_with_prices(text: str) -> List[ItemPrice]:
     except Exception as e:
         raise Exception(f"Error extracting prices: {str(e)}")
 
-def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
-    """Extract prices from receipt image with enhanced error handling and timeout"""
+def extract_prices_from_image(image_bytes: bytes, timeout: int = 30) -> Optional[List[ItemPrice]]:
+    """Extract prices from receipt image with enhanced error handling and threading-safe timeout"""
+    start_time = time.time()
+    
     try:
         # Validate image
         is_valid, error_message = validate_image(image_bytes)
@@ -230,10 +220,18 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         except Exception as e:
             raise ValueError(f"Error loading image: {str(e)}. Please ensure the image is not corrupted.")
         
+        # Check timeout
+        if time.time() - start_time > timeout:
+            raise OCRTimeoutError("Image processing timed out")
+        
         try:
             processed_image = preprocess_image(image)
         except Exception as e:
             raise ValueError(f"Error preprocessing image: {str(e)}. Please try with a clearer image.")
+        
+        # Check timeout
+        if time.time() - start_time > timeout:
+            raise OCRTimeoutError("Image preprocessing timed out")
         
         # Configure tesseract for Masstown Market receipt format
         custom_config = (
@@ -244,8 +242,9 @@ def extract_prices_from_image(image_bytes: bytes) -> Optional[List[ItemPrice]]:
         )
         
         try:
-            # Perform OCR with timeout
-            text = perform_ocr(processed_image, custom_config)
+            # Perform OCR with remaining timeout
+            remaining_timeout = max(1, timeout - (time.time() - start_time))
+            text = perform_ocr(processed_image, custom_config, timeout=remaining_timeout)
             
             if not text.strip():
                 raise ValueError("No text could be extracted. Please ensure the receipt is clearly visible and properly lit.")
