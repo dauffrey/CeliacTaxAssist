@@ -3,6 +3,7 @@ from utils.ocr_processor import extract_prices_from_image, ItemPrice
 from PIL import Image
 import io
 from typing import List, Dict
+import time
 
 def render_detected_items(items: List[ItemPrice]) -> Dict[str, Dict]:
     """
@@ -50,12 +51,18 @@ def render_receipt_scanner():
     
     # File uploader with clear format instructions
     st.markdown("""
-        <div style='background: var(--ios-info-background); padding: 10px; border-radius: 10px; margin-bottom: 15px;'>
-            <p style='margin: 0; color: var(--ios-info-text);'>
-                📸 <strong>Supported formats:</strong> JPEG, PNG, BMP, TIFF<br>
-                💡 <strong>Tips for best results:</strong>
+        <div style='background: var(--ios-info-background); padding: 15px; border-radius: 10px; margin-bottom: 20px;'>
+            <h4 style='margin-top: 0; color: var(--ios-info-text);'>📝 Receipt Scanner Guidelines</h4>
+            <p style='margin-bottom: 10px; color: var(--ios-info-text);'>
+                <strong>Supported Formats:</strong><br>
+                • JPEG, PNG, BMP, TIFF<br>
+                • Minimum resolution: 300x300 pixels
+            </p>
+            <p style='margin-bottom: 0; color: var(--ios-info-text);'>
+                <strong>Tips for Best Results:</strong><br>
                 • Ensure good lighting<br>
-                • Keep receipt flat<br>
+                • Keep receipt flat and unwrinkled<br>
+                • Capture the entire receipt<br>
                 • Make sure prices are clearly visible
             </p>
         </div>
@@ -86,19 +93,44 @@ def render_receipt_scanner():
             # Display image with caption
             st.image(image, caption='Uploaded Receipt', use_column_width=False, width=display_size[0])
             
-            with st.spinner("Processing receipt..."):
+            # Process receipt with progress indicators
+            with st.spinner("📸 Processing receipt..."):
+                progress_text = st.empty()
+                progress_bar = st.progress(0)
+                
                 try:
+                    # Update progress indicators
+                    progress_text.text("Validating image format...")
+                    progress_bar.progress(20)
+                    time.sleep(0.5)
+                    
+                    progress_text.text("Preprocessing image...")
+                    progress_bar.progress(40)
+                    time.sleep(0.5)
+                    
+                    progress_text.text("Performing OCR...")
+                    progress_bar.progress(60)
+                    
                     # Process the image
                     detected_items = extract_prices_from_image(image_bytes)
                     
+                    progress_text.text("Analyzing items and prices...")
+                    progress_bar.progress(80)
+                    time.sleep(0.5)
+                    
                     if not detected_items:
-                        st.warning("🔍 No items or prices detected in the receipt. Please ensure:")
+                        progress_bar.progress(100)
+                        st.warning("🔍 No items or prices detected. Please ensure:")
                         st.markdown("""
                             - The receipt image is clear and well-lit
                             - Text and prices are clearly visible
                             - Items and prices are in standard format
+                            - There's good contrast between text and background
                         """)
                         return None
+                    
+                    progress_text.text("Processing complete!")
+                    progress_bar.progress(100)
                     
                     # Display detected items and get user selection
                     selected_items = render_detected_items(detected_items)
@@ -135,18 +167,38 @@ def render_receipt_scanner():
                         else:
                             st.info("Please mark at least one gluten-free and one regular item for comparison.")
                     
-                except Exception as e:
-                    st.error(f"❌ Error processing receipt: {str(e)}")
+                except ValueError as e:
+                    st.error(f"❌ {str(e)}")
                     st.markdown("""
-                        Please make sure:
-                        - The image is not corrupted
-                        - The file format is supported
-                        - The image is clear and readable
+                        Need help? Try these tips:
+                        1. Make sure the image is clear and well-lit
+                        2. Use a supported file format (JPEG, PNG, BMP, TIFF)
+                        3. Check that the receipt is not crumpled or damaged
+                        4. Ensure the text is sharp and readable
+                    """)
+                    return None
+                    
+                except Exception as e:
+                    st.error("❌ An unexpected error occurred. Please try again.")
+                    st.markdown(f"""
+                        Error details: {str(e)}
+                        
+                        Please try:
+                        1. Taking a new photo of the receipt
+                        2. Using a different file format
+                        3. Ensuring good lighting and focus
+                        4. Contact support if the issue persists
                     """)
                     return None
                 
         except Exception as e:
             st.error(f"❌ Error loading image: {str(e)}")
+            st.markdown("""
+                Please check:
+                1. The file is not corrupted
+                2. The format is supported
+                3. The file size is reasonable
+            """)
             return None
     
     return None
