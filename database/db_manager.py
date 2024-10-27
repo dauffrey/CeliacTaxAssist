@@ -7,7 +7,6 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 import logging
-import ssl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,11 +21,6 @@ class DatabaseManager:
 
     def _create_connection_pool(self):
         """Create a new connection pool with enhanced SSL configuration"""
-        # SSL Context configuration
-        ssl_context = ssl.create_default_context()
-        ssl_context.verify_mode = ssl.CERT_REQUIRED
-        ssl_context.check_hostname = True
-
         conn_params = {
             'host': os.environ['PGHOST'],
             'database': os.environ['PGDATABASE'],
@@ -34,14 +28,12 @@ class DatabaseManager:
             'password': os.environ['PGPASSWORD'],
             'port': os.environ['PGPORT'],
             'sslmode': 'verify-full',
-            'sslcert': None,  # Using system default certificates
-            'sslkey': None,   # Using system default key
+            'ssl': True,
             'connect_timeout': 3,
             'keepalives': 1,
             'keepalives_idle': 30,
             'keepalives_interval': 10,
-            'keepalives_count': 5,
-            'options': f'-c statement_timeout=30000'  # 30 second statement timeout
+            'keepalives_count': 5
         }
         
         retry_count = 0
@@ -89,14 +81,6 @@ class DatabaseManager:
                     logger.warning("Received closed connection from pool, attempting to reconnect")
                     self.pool.putconn(conn)
                     raise psycopg2.OperationalError("Connection is closed")
-                
-                # Verify SSL connection
-                with conn.cursor() as cur:
-                    cur.execute("SHOW ssl")
-                    ssl_status = cur.fetchone()[0]
-                    if ssl_status != 'on':
-                        raise psycopg2.OperationalError("SSL is not enabled for this connection")
-                
                 return conn
             except psycopg2.OperationalError as e:
                 last_error = e
@@ -163,7 +147,169 @@ class DatabaseManager:
             if conn:
                 self.pool.putconn(conn)
 
-    # ... [Rest of the DatabaseManager class remains unchanged] ...
+    def _create_tables(self):
+        """Create necessary database tables"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Create users table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(255) UNIQUE NOT NULL,
+                        email VARCHAR(255) UNIQUE NOT NULL,
+                        password_hash BYTEA NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create products table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS products (
+                        id SERIAL PRIMARY KEY,
+                        product_name VARCHAR(255) NOT NULL,
+                        gf_price DECIMAL(10,2) NOT NULL,
+                        regular_price DECIMAL(10,2) NOT NULL,
+                        difference DECIMAL(10,2) NOT NULL,
+                        user_id INTEGER REFERENCES users(id),
+                        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Create stores table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS stores (
+                        id SERIAL PRIMARY KEY,
+                        store_name VARCHAR(255) NOT NULL,
+                        location VARCHAR(255),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Create price_comparisons table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS price_comparisons (
+                        id SERIAL PRIMARY KEY,
+                        product_name VARCHAR(255) NOT NULL,
+                        store_id INTEGER REFERENCES stores(id),
+                        gf_price DECIMAL(10,2) NOT NULL,
+                        regular_price DECIMAL(10,2) NOT NULL,
+                        price_date DATE NOT NULL,
+                        added_by INTEGER REFERENCES users(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(product_name, store_id, price_date)
+                    )
+                """)
+                conn.commit()
+                logger.info("Successfully created/verified all database tables")
+
+    def create_user(self, username, email, password):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+                    cur.execute("""
+                        INSERT INTO users (username, email, password_hash)
+                        VALUES (%s, %s, %s)
+                        RETURNING id
+                    """, (username, email, password_hash))
+                    conn.commit()
+                    return cur.fetchone()[0]
+                except psycopg2.errors.UniqueViolation:
+                    conn.rollback()
+                    return None
+
+    def verify_user(self, username, password):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, password_hash FROM users WHERE username = %s", (username,))
+                result = cur.fetchone()
+                if result and bcrypt.checkpw(password.encode('utf-8'), bytes(result[1])):
+                    return result[0]
+                return None
+
+    def add_product(self, product_name, gf_price, regular_price, user_id):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                difference = float(gf_price) - float(regular_price)
+                cur.execute("""
+                    INSERT INTO products (product_name, gf_price, regular_price, difference, user_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (product_name, gf_price, regular_price, difference, user_id))
+                conn.commit()
+                return cur.fetchone()[0]
+
+    def get_user_products(self, user_id):
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM products WHERE user_id = %s ORDER BY date_added DESC", (user_id,))
+                return cur.fetchall()
+
+    def delete_product(self, product_id, user_id):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM products WHERE id = %s AND user_id = %s", (product_id, user_id))
+                conn.commit()
+
+    def add_store(self, store_name, location=None):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("""
+                        INSERT INTO stores (store_name, location)
+                        VALUES (%s, %s)
+                        RETURNING id
+                    """, (store_name, location))
+                    conn.commit()
+                    return cur.fetchone()[0]
+                except psycopg2.errors.UniqueViolation:
+                    conn.rollback()
+                    return None
+
+    def get_stores(self):
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM stores ORDER BY store_name")
+                return cur.fetchall()
+
+    def add_price_comparison(self, product_name, store_id, gf_price, regular_price, added_by, price_date=None):
+        if price_date is None:
+            price_date = datetime.now().date()
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("""
+                        INSERT INTO price_comparisons 
+                        (product_name, store_id, gf_price, regular_price, price_date, added_by)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (product_name, store_id, gf_price, regular_price, price_date, added_by))
+                    conn.commit()
+                    return cur.fetchone()[0]
+                except psycopg2.errors.UniqueViolation:
+                    conn.rollback()
+                    return None
+
+    def get_price_comparisons(self, product_name=None):
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if product_name:
+                    cur.execute("""
+                        SELECT pc.*, s.store_name, s.location
+                        FROM price_comparisons pc
+                        JOIN stores s ON pc.store_id = s.id
+                        WHERE pc.product_name = %s
+                        ORDER BY pc.price_date DESC, pc.gf_price ASC
+                    """, (product_name,))
+                else:
+                    cur.execute("""
+                        SELECT pc.*, s.store_name, s.location
+                        FROM price_comparisons pc
+                        JOIN stores s ON pc.store_id = s.id
+                        ORDER BY pc.price_date DESC, pc.product_name, pc.gf_price ASC
+                    """)
+                return cur.fetchall()
 
     def __del__(self):
         """Enhanced cleanup of connection pool on deletion"""

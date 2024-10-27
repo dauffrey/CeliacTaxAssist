@@ -1,0 +1,37 @@
+OperationalError: connection to server at "ep-purple-poetry-a5k5oa4d.us-east-2.aws.neon.tech" (3.23.186.13), port 5432 failed: root certificate file "/home/runner/.postgresql/root.crt" does not exist Either provide the file, use the system's trusted roots with sslrootcert=system, or change sslmode to disable server certificate verification.
+Traceback:
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 88, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 579, in code_to_exec
+    exec(code, module.__dict__)
+File "/home/runner/CeliacTaxAssist/main.py", line 41, in <module>
+    db = get_database()
+         ^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/caching/cache_utils.py", line 210, in __call__
+    return self._get_or_create_cached_value(args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/caching/cache_utils.py", line 235, in _get_or_create_cached_value
+    return self._handle_cache_miss(cache, value_key, func_args, func_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/streamlit/runtime/caching/cache_utils.py", line 292, in _handle_cache_miss
+    computed_value = self._info.func(*func_args, **func_kwargs)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/main.py", line 39, in get_database
+    return DatabaseManager()
+           ^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/database/db_manager.py", line 20, in __init__
+    self._create_connection_pool()
+File "/home/runner/CeliacTaxAssist/database/db_manager.py", line 75, in _create_connection_pool
+    raise last_error
+File "/home/runner/CeliacTaxAssist/database/db_manager.py", line 52, in _create_connection_pool
+    self.pool = psycopg2.pool.SimpleConnectionPool(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/psycopg2/pool.py", line 59, in __init__
+    self._connect()
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/psycopg2/pool.py", line 63, in _connect
+    conn = psycopg2.connect(*self._args, **self._kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/runner/CeliacTaxAssist/.pythonlibs/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
