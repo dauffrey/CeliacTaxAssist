@@ -27,8 +27,7 @@ class DatabaseManager:
             'user': os.environ['PGUSER'],
             'password': os.environ['PGPASSWORD'],
             'port': os.environ['PGPORT'],
-            'sslmode': 'verify-full',
-            'ssl': True,
+            'sslmode': 'require',  # Changed from verify-full to require
             'connect_timeout': 3,
             'keepalives': 1,
             'keepalives_idle': 30,
@@ -115,7 +114,11 @@ class DatabaseManager:
         try:
             conn = self._get_db_connection()
             yield conn
+            if conn and not conn.closed:
+                conn.commit()
         except psycopg2.OperationalError as e:
+            if conn and not conn.closed:
+                conn.rollback()
             error_msg = str(e)
             logger.error(f"Database operational error: {error_msg}")
             
@@ -126,81 +129,77 @@ class DatabaseManager:
                 "certificate verify failed"
             ]):
                 logger.info("Detected SSL connection failure, attempting to reconnect")
-                if conn:
+                if conn and not conn.closed:
                     try:
                         conn.close()
                     except Exception as close_error:
                         logger.error(f"Error closing connection: {str(close_error)}")
+                if conn:
                     self.pool.putconn(conn)
                 self._create_connection_pool()
             raise
         except Exception as e:
+            if conn and not conn.closed:
+                conn.rollback()
             logger.error(f"Unexpected database error: {str(e)}")
-            if conn:
-                try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.error(f"Error closing connection: {str(close_error)}")
-                self.pool.putconn(conn)
             raise
-        else:
+        finally:
             if conn:
                 self.pool.putconn(conn)
 
     def _create_tables(self):
         """Create necessary database tables"""
         with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Create users table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        id SERIAL PRIMARY KEY,
-                        username VARCHAR(255) UNIQUE NOT NULL,
-                        email VARCHAR(255) UNIQUE NOT NULL,
-                        password_hash BYTEA NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create products table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS products (
-                        id SERIAL PRIMARY KEY,
-                        product_name VARCHAR(255) NOT NULL,
-                        gf_price DECIMAL(10,2) NOT NULL,
-                        regular_price DECIMAL(10,2) NOT NULL,
-                        difference DECIMAL(10,2) NOT NULL,
-                        user_id INTEGER REFERENCES users(id),
-                        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+            if conn and not conn.closed:
+                with conn.cursor() as cur:
+                    # Create users table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            id SERIAL PRIMARY KEY,
+                            username VARCHAR(255) UNIQUE NOT NULL,
+                            email VARCHAR(255) UNIQUE NOT NULL,
+                            password_hash BYTEA NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    # Create products table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS products (
+                            id SERIAL PRIMARY KEY,
+                            product_name VARCHAR(255) NOT NULL,
+                            gf_price DECIMAL(10,2) NOT NULL,
+                            regular_price DECIMAL(10,2) NOT NULL,
+                            difference DECIMAL(10,2) NOT NULL,
+                            user_id INTEGER REFERENCES users(id),
+                            date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
 
-                # Create stores table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS stores (
-                        id SERIAL PRIMARY KEY,
-                        store_name VARCHAR(255) NOT NULL,
-                        location VARCHAR(255),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+                    # Create stores table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS stores (
+                            id SERIAL PRIMARY KEY,
+                            store_name VARCHAR(255) NOT NULL,
+                            location VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
 
-                # Create price_comparisons table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS price_comparisons (
-                        id SERIAL PRIMARY KEY,
-                        product_name VARCHAR(255) NOT NULL,
-                        store_id INTEGER REFERENCES stores(id),
-                        gf_price DECIMAL(10,2) NOT NULL,
-                        regular_price DECIMAL(10,2) NOT NULL,
-                        price_date DATE NOT NULL,
-                        added_by INTEGER REFERENCES users(id),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(product_name, store_id, price_date)
-                    )
-                """)
-                conn.commit()
-                logger.info("Successfully created/verified all database tables")
+                    # Create price_comparisons table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS price_comparisons (
+                            id SERIAL PRIMARY KEY,
+                            product_name VARCHAR(255) NOT NULL,
+                            store_id INTEGER REFERENCES stores(id),
+                            gf_price DECIMAL(10,2) NOT NULL,
+                            regular_price DECIMAL(10,2) NOT NULL,
+                            price_date DATE NOT NULL,
+                            added_by INTEGER REFERENCES users(id),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(product_name, store_id, price_date)
+                        )
+                    """)
 
     def create_user(self, username, email, password):
         with self.get_connection() as conn:
@@ -212,10 +211,8 @@ class DatabaseManager:
                         VALUES (%s, %s, %s)
                         RETURNING id
                     """, (username, email, password_hash))
-                    conn.commit()
                     return cur.fetchone()[0]
                 except psycopg2.errors.UniqueViolation:
-                    conn.rollback()
                     return None
 
     def verify_user(self, username, password):
@@ -236,7 +233,6 @@ class DatabaseManager:
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                 """, (product_name, gf_price, regular_price, difference, user_id))
-                conn.commit()
                 return cur.fetchone()[0]
 
     def get_user_products(self, user_id):
@@ -249,7 +245,6 @@ class DatabaseManager:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM products WHERE id = %s AND user_id = %s", (product_id, user_id))
-                conn.commit()
 
     def add_store(self, store_name, location=None):
         with self.get_connection() as conn:
@@ -260,10 +255,8 @@ class DatabaseManager:
                         VALUES (%s, %s)
                         RETURNING id
                     """, (store_name, location))
-                    conn.commit()
                     return cur.fetchone()[0]
                 except psycopg2.errors.UniqueViolation:
-                    conn.rollback()
                     return None
 
     def get_stores(self):
@@ -285,10 +278,8 @@ class DatabaseManager:
                         VALUES (%s, %s, %s, %s, %s, %s)
                         RETURNING id
                     """, (product_name, store_id, gf_price, regular_price, price_date, added_by))
-                    conn.commit()
                     return cur.fetchone()[0]
                 except psycopg2.errors.UniqueViolation:
-                    conn.rollback()
                     return None
 
     def get_price_comparisons(self, product_name=None):
