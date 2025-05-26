@@ -1,3 +1,4 @@
+# Applying the specified error handling changes to the provided code.
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -27,7 +28,7 @@ class DatabaseManager:
             # For connection pooling, use the pooler URL if available
             if '.us-east-2' in database_url and '-pooler' not in database_url:
                 database_url = database_url.replace('.us-east-2', '-pooler.us-east-2')
-            
+
             conn_params = {
                 'dsn': database_url,
                 'sslmode': 'require',
@@ -52,10 +53,10 @@ class DatabaseManager:
                 'keepalives_interval': 10,
                 'keepalives_count': 5
             }
-        
+
         retry_count = 0
         last_error = None
-        
+
         while retry_count < self.max_retries:
             try:
                 if 'dsn' in conn_params:
@@ -76,11 +77,11 @@ class DatabaseManager:
                     )
                 logger.info("Successfully created database connection pool with SSL")
                 return
-            except psycopg2.OperationalError as e:
+            except (psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
                 retry_count += 1
                 last_error = e
                 error_msg = str(e)
-                
+
                 if "SSL" in error_msg:
                     logger.error(f"SSL connection error: {error_msg}")
                     if "certificate verify failed" in error_msg:
@@ -89,11 +90,11 @@ class DatabaseManager:
                         logger.error("SSL system call error - potential network issue")
                 else:
                     logger.error(f"Database connection error: {error_msg}")
-                
+
                 if retry_count == self.max_retries:
                     logger.error(f"Failed to create connection pool after {self.max_retries} attempts")
                     raise last_error
-                
+
                 logger.warning(f"Connection attempt {retry_count} failed, retrying in {self.retry_delay} seconds")
                 time.sleep(self.retry_delay * retry_count)  # Exponential backoff
 
@@ -101,7 +102,7 @@ class DatabaseManager:
         """Get a database connection with enhanced SSL retry logic"""
         retries = 0
         last_error = None
-        
+
         while retries < self.max_retries:
             try:
                 conn = self.pool.getconn()
@@ -110,11 +111,11 @@ class DatabaseManager:
                     self.pool.putconn(conn)
                     raise psycopg2.OperationalError("Connection is closed")
                 return conn
-            except psycopg2.OperationalError as e:
+            except (psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
                 last_error = e
                 retries += 1
                 error_msg = str(e)
-                
+
                 if "SSL" in error_msg:
                     logger.error(f"SSL connection error on attempt {retries}: {error_msg}")
                     if "connection has been closed unexpectedly" in error_msg:
@@ -123,7 +124,7 @@ class DatabaseManager:
                         logger.warning("SSL system call error, waiting before retry")
                 else:
                     logger.error(f"Database error on attempt {retries}: {error_msg}")
-                
+
                 if retries < self.max_retries:
                     sleep_time = self.retry_delay * (2 ** (retries - 1))  # Exponential backoff
                     time.sleep(sleep_time)
@@ -150,7 +151,7 @@ class DatabaseManager:
                 conn.rollback()
             error_msg = str(e)
             logger.error(f"Database operational error: {error_msg}")
-            
+
             if any(ssl_error in error_msg for ssl_error in [
                 "SSL connection has been closed unexpectedly",
                 "SSL SYSCALL error",
@@ -191,7 +192,7 @@ class DatabaseManager:
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
-                    
+
                     # Create products table
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS products (
@@ -297,7 +298,7 @@ class DatabaseManager:
     def add_price_comparison(self, product_name, store_id, gf_price, regular_price, added_by, price_date=None):
         if price_date is None:
             price_date = datetime.now().date()
-        
+
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 try:
