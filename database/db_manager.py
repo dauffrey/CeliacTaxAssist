@@ -21,30 +21,59 @@ class DatabaseManager:
 
     def _create_connection_pool(self):
         """Create a new connection pool with enhanced SSL configuration"""
-        conn_params = {
-            'host': os.environ['PGHOST'],
-            'database': os.environ['PGDATABASE'],
-            'user': os.environ['PGUSER'],
-            'password': os.environ['PGPASSWORD'],
-            'port': os.environ['PGPORT'],
-            'sslmode': 'require',  # Changed from verify-full to require
-            'connect_timeout': 3,
-            'keepalives': 1,
-            'keepalives_idle': 30,
-            'keepalives_interval': 10,
-            'keepalives_count': 5
-        }
+        # Use DATABASE_URL if available (Replit standard), otherwise use individual params
+        if 'DATABASE_URL' in os.environ:
+            database_url = os.environ['DATABASE_URL']
+            # For connection pooling, use the pooler URL if available
+            if '.us-east-2' in database_url and '-pooler' not in database_url:
+                database_url = database_url.replace('.us-east-2', '-pooler.us-east-2')
+            
+            conn_params = {
+                'dsn': database_url,
+                'sslmode': 'require',
+                'connect_timeout': 3,
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 5
+            }
+        else:
+            # Fallback to individual environment variables
+            conn_params = {
+                'host': os.environ['PGHOST'],
+                'database': os.environ['PGDATABASE'],
+                'user': os.environ['PGUSER'],
+                'password': os.environ['PGPASSWORD'],
+                'port': os.environ['PGPORT'],
+                'sslmode': 'require',
+                'connect_timeout': 3,
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 5
+            }
         
         retry_count = 0
         last_error = None
         
         while retry_count < self.max_retries:
             try:
-                self.pool = psycopg2.pool.SimpleConnectionPool(
-                    minconn=1,
-                    maxconn=10,
-                    **conn_params
-                )
+                if 'dsn' in conn_params:
+                    # Use DSN connection string
+                    dsn = conn_params.pop('dsn')
+                    self.pool = psycopg2.pool.SimpleConnectionPool(
+                        minconn=1,
+                        maxconn=10,
+                        dsn=dsn,
+                        **conn_params
+                    )
+                else:
+                    # Use individual parameters
+                    self.pool = psycopg2.pool.SimpleConnectionPool(
+                        minconn=1,
+                        maxconn=10,
+                        **conn_params
+                    )
                 logger.info("Successfully created database connection pool with SSL")
                 return
             except psycopg2.OperationalError as e:
