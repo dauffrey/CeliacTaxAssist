@@ -1,0 +1,65 @@
+name: Create Release Tag
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          # Get the release tag name from the GitHub event
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          
+          # If the tag doesn't exist, create it
+          if ! git tag -l | grep -q "^$TAG_NAME$"; then
+            echo "Creating tag: $TAG_NAME"
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            
+            # Create annotated tag with release information
+            git tag -a "$TAG_NAME" -m "Release $TAG_NAME
+
+🍁 Canadian Celiac Tax Calculator
+
+Features included in this release:
+- Complete tax calculator for Canadian Celiac medical expenses
+- OCR receipt scanning functionality  
+- Multi-store price comparison database
+- CRA-compliant tax credit calculations
+- Multiple export formats (PDF, CSV, QIF, JSON)
+- Secure user authentication system
+- Full accessibility support (WCAG 2.1 AA)
+- Mobile-responsive Canadian-themed design
+
+For detailed changes, see the release notes."
+            
+            # Push the tag
+            git push origin "$TAG_NAME"
+            echo "✅ Tag $TAG_NAME created and pushed successfully!"
+          else
+            echo "ℹ️ Tag $TAG_NAME already exists"
+          fi
+
+      - name: Update VERSION file
+        run: |
+          # Extract version from tag (remove 'v' prefix if present)
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          
+          # Update VERSION file
+          echo "$VERSION" > VERSION
+          
+          # Commit the updated VERSION file
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add VERSION
+          git commit -m "Update VERSION file to $VERSION" || echo "No changes to commit"
+          git push origin main || echo "No changes to push"
